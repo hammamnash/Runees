@@ -1,6 +1,9 @@
 ﻿﻿"use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MetricCard } from "@/components/MetricCard";
+import { LiveChart } from "@/components/LiveChart";
+import { LapTrack } from "@/components/LapTrack";
+import { HrAlertSettings, getStoredMaxHr } from "@/components/HrAlertSettings";
 import { useBluetooth } from "@/hooks/useBluetooth";
 import { useRecorder } from "@/hooks/useRecorder";
 import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
@@ -114,7 +117,9 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [mock, recorder.state]);
 
-  const zone = getHrZone(hr ?? 0);
+  const [maxHr, setMaxHrState] = useState(190);
+  useEffect(() => { setMaxHrState(getStoredMaxHr()); }, []);
+  const zone = getHrZone(hr ?? 0, maxHr);
   const holdSpeed = lastNonZeroSpeedRef.current && now - lastNonZeroSpeedRef.current.t < HOLD_MS ? lastNonZeroSpeedRef.current.v : null;
   const holdCad = lastNonZeroCadRef.current && now - lastNonZeroCadRef.current.t < HOLD_MS ? lastNonZeroCadRef.current.v : null;
   const displaySpeed = smoothSpeed ?? speedMs;
@@ -267,6 +272,46 @@ export default function Home() {
         {recorder.state === "stopped" && recorder.records.length > 0 ? (
           <div className="rounded-2xl border border-emerald-900 bg-emerald-950/30 p-4 text-sm text-emerald-200">
             Session saved in memory. Click <span className="font-semibold">Download .FIT</span> and import at <a className="underline" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect Import</a>. Validate at fitfileviewer.com if needed.
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
+            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Live Chart · HR / Cadence / km/h</div>
+            <LiveChart records={recorder.records} />
+          </div>
+          <div className="space-y-4">
+            <LapTrack distanceM={distanceM} />
+            <HrAlertSettings hr={hr} />
+          </div>
+        </div>
+
+        {recorder.getLaps().length > 0 ? (
+          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
+            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Auto-laps · 1 km</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-zinc-500">
+                  <tr><th className="text-left py-1">Lap</th><th className="text-right">Dist</th><th className="text-right">Time</th><th className="text-right">Pace</th><th className="text-right">Avg HR</th></tr>
+                </thead>
+                <tbody>
+                  {recorder.getLaps().map((lap) => {
+                    const secs = (lap.endTime.getTime() - lap.startTime.getTime()) / 1000;
+                    const pace = secs > 0 && lap.distanceM > 0 ? paceMinPerKm(lap.distanceM / secs) : "--:--";
+                    const avgHr = lap.records.filter((r) => r.heartRate).length ? Math.round(lap.records.filter((r) => r.heartRate).reduce((a, b) => a + (b.heartRate ?? 0), 0) / Math.max(1, lap.records.filter((r) => r.heartRate).length)) : "--";
+                    return (
+                      <tr key={lap.index} className="border-t border-zinc-800">
+                        <td className="py-1">{lap.index + 1}</td>
+                        <td className="text-right">{(lap.distanceM / 1000).toFixed(2)} km</td>
+                        <td className="text-right">{formatTime(lap.endTime.getTime() - lap.startTime.getTime())}</td>
+                        <td className="text-right">{pace} /km</td>
+                        <td className="text-right">{avgHr}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         ) : null}
 

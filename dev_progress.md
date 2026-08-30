@@ -1,11 +1,11 @@
-# Runees � Development Progress
+# Runees - Development Progress
 
-> Last updated: 2026-08-30 20:06 WIB
+> Last updated: 2026-08-30 20:50 WIB
 > Branch: `agents/hr-monitor-cadence-app-development` | Worktree: `hr-monitor-cadence-app-development`
 
 ## Summary
 
-Phase 1 (Web App MVP) is **complete and verified**. The app runs on `http://localhost:3000` (or `3001` if 3000 busy), connects via Web Bluetooth to a Garmin Forerunner in **Virtual Run** mode, displays live HR/pace/cadence/distance/timer, records at 1 Hz, and exports a Garmin Connect-importable `.FIT` file. PWA offline support is enabled for production builds. Build and lint are clean.
+Phase 1 (Web App MVP) is **complete and verified**. Phase 2 is **complete (web features) + Tauri scaffolded**. The app runs on `http://localhost:3000`, connects via Web Bluetooth to Garmin Virtual Run, displays HR/pace/cadence/distance/timer + live chart + 400m lap animation + auto-lap/km + HR alert, records at 1 Hz, exports FIT with auto-laps. Tauri wrapper scaffolded (`src-tauri/`, `npm run tauri:dev/build`); portable exe requires Rust toolchain (`cargo`). Build and lint are clean (118 kB / 205 kB).
 
 ---
 
@@ -170,35 +170,54 @@ Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/do
 
 ---
 
+### 10. Phase 2 - HR Alert + Live Chart + Lap Animation + Auto-lap - Done
+
+- **HR zone config + audio alert:** `src/components/HrAlertSettings.tsx` - Max HR + threshold inputs persisted in `localStorage` (`runees_maxHr`, `runees_hrAlert`, `runees_hrAlertEnabled`), beep via `AudioContext` (880 Hz) + `navigator.vibrate(200)` when `hr >= threshold`, throttled 10s, red banner when over. `page.tsx` uses `getStoredMaxHr()` for zone calc (hydration-safe via `useEffect`).
+- **Live chart:** `src/components/LiveChart.tsx` - `recharts` `LineChart` with HR (red), Cadence (blue), km/h (green), dual Y axes, `CartesianGrid`, `Tooltip`, `Legend`. Data from `recorder.records` mapped to `{t, hr, cad, kmh}`.
+- **Lap animation (400m):** `src/components/LapTrack.tsx` - SVG ring (r=44) with `strokeDasharray` progress, lap number, `400m / lap` label, total distance, linear bar. `progress = (distanceM % 400) / 400`.
+- **Auto-lap per km:** `src/hooks/useRecorder.ts` `getLaps()` splits `records` by 1000m distance, returns `{index, startTime, endTime, distanceM, records}[]`. `src/lib/fitEncoder.ts` generates multiple `Lap (19)` messages (one per km, last partial lap included) with per-lap avg/max HR/cadence/speed. `page.tsx` renders lap table (Lap, Dist, Time, Pace, Avg HR).
+- **Verified:** `npm run build` 118 kB / 205 kB, `npm run lint` clean.
+
+### 11. Phase 2 - Tauri Portable Exe - Scaffolded
+
+- Installed `@tauri-apps/cli@2.11.4`, `npx tauri init --ci` created `src-tauri/` (`Cargo.toml`, `tauri.conf.json`, `src/lib.rs`, `icons/`).
+- `tauri.conf.json`: `identifier: com.runees.app`, `frontendDist: ../out`, `devUrl: http://localhost:3000`, `beforeBuildCommand: TAURI_BUILD=1 npm run build`, window 1100x750.
+- `next.config.mjs`: `output: "export"` when `TAURI_BUILD=1` for static export to `out/`.
+- `package.json` scripts: `tauri`, `tauri:dev`, `tauri:build`.
+- `.gitignore`: added `/src-tauri/target/`.
+- **Requires Rust toolchain** (`cargo`, `rustc`) to run `npm run tauri:dev` / `npm run tauri:build` - not installed on this machine. Web build works without Rust.
+
+---
+
 ## Verification
 
 | Check | Result |
 |---|---|
-| `npm install` | 378 + 292 (next-pwa) packages, clean |
-| `npx next build` | `? Compiled successfully`, PWA sw generated |
-| `npx next lint` | `? No ESLint warnings or errors` |
-| `npm run dev` | `? Ready in 6.5s`, `HTTP 200` on `localhost:3001`, HTML contains `Runees` |
-| PWA `sw.js` | Exists, 6.1 KB, workbox precache |
-| FIT | `buildFitFile` generates valid FIT (header + CRC, FileId/Activity/Session/Lap/Record) � manual validation via fitfileviewer.com / Garmin Connect import pending real device test |
+| `npm install` | 378 + 292 (next-pwa) + recharts + @tauri-apps/cli, clean |
+| `npx next build` | `Compiled successfully`, 118 kB / 205 kB, PWA sw generated |
+| `npx next lint` | No ESLint warnings or errors |
+| `npm run dev` | Ready on `localhost:3000`, HTML contains `Runees` |
+| PWA `sw.js` | Exists, workbox precache |
+| FIT | `buildFitFile` with auto-lap per km (multiple Lap messages), header + CRC, FileId/Activity/Session/Lap/Record |
+| Tauri | `src-tauri/` scaffolded, `tauri.conf.json` valid, requires `cargo` for exe build |
 
 ---
 
 ## Known Issues / Notes
 
-- **Next 14.2.5 security advisory** � `npm audit` reports 8 vulns (7 high, 1 critical) from Next 14.2.5. Non-blocking for MVP; upgrade to patched Next 14.x or 15.x later.
-- **Port 3000 in use** � dev server fell back to `3001` during verification; normal if another Next instance runs.
-- **FIT validation** � FIT file structure is spec-compliant but has not yet been tested with a real Garmin Connect import (requires Forerunner Virtual Run session). Validate at https://www.fitfileviewer.com/ before claiming final.
-- **No tests** � `bleParser` has no unit tests yet; add when stabilizing.
-- **No `src-tauri/`** � Phase 2 Tauri wrapper not yet scaffolded.
+- **Next 14.2.5 security advisory** - `npm audit` reports 13 vulns (12 high, 1 critical) from Next 14.2.5 + recharts. Non-blocking; upgrade later.
+- **FIT validation** - FIT structure spec-compliant with auto-laps but not yet tested with real Garmin Connect import. Validate at https://www.fitfileviewer.com/.
+- **No tests** - `bleParser` has no unit tests yet.
+- **Tauri exe** - Requires Rust toolchain. Install from https://rustup.rs/ then `npm run tauri:build` produces portable exe in `src-tauri/target/release/bundle/`.
 
 ---
 
-## Next Steps (Phase 2)
+## Next Steps
 
-1. **Real device test** � Connect Forerunner Virtual Run, verify live HR/pace/cadence, record 1-2 min, download FIT, import to Garmin Connect, check graphs.
-2. **Unit tests** � `bleParser` HR/RSC parsing with known byte sequences.
-3. **Tauri portable exe** � `npm create tauri-app`, `tauri.conf.json` portable single exe, BLE via `tauri-plugin-ble` or WebView Web Bluetooth, `npm run tauri build`.
-4. **Polish** � HR zone config, live chart (recharts), auto-lap/km, calories, history, `.TCX`/`.GPX` export.
+1. **Real device test** - Connect Forerunner Virtual Run, verify live HR/pace/cadence, chart, lap animation, auto-lap table, HR alert, record 1-2 min, download FIT, import to Garmin Connect.
+2. **Unit tests** - `bleParser` HR/RSC parsing with known byte sequences.
+3. **Tauri exe build** - Install Rust, run `npm run tauri:build`, test portable exe on Windows.
+4. **Polish** - Calories, history, `.TCX`/`.GPX` export if needed.
 
 ---
 

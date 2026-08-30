@@ -113,5 +113,27 @@ export function useRecorder() {
     };
   }, [records, elapsedMs]);
 
-  return { state, elapsedMs, records, start, pause, resume, stop, reset, pushSample, getSession, startTime: startTimeRef.current };
+  const getLaps = useCallback(() => {
+    if (!startTimeRef.current || records.length === 0) return [];
+    const laps: { index: number; startTime: Date; endTime: Date; distanceM: number; records: FitRecord[] }[] = [];
+    let lapStartIdx = 0;
+    let lapStartDist = records[0].distanceM ?? 0;
+    for (let i = 1; i < records.length; i++) {
+      const d = records[i].distanceM ?? 0;
+      if (d - lapStartDist >= 1000) {
+        const slice = records.slice(lapStartIdx, i + 1);
+        laps.push({ index: laps.length, startTime: slice[0].timestamp, endTime: slice[slice.length - 1].timestamp, distanceM: d - lapStartDist, records: slice });
+        lapStartIdx = i + 1;
+        lapStartDist = d;
+      }
+    }
+    if (lapStartIdx < records.length) {
+      const slice = records.slice(lapStartIdx);
+      const lastD = slice[slice.length - 1].distanceM ?? lapStartDist;
+      laps.push({ index: laps.length, startTime: slice[0].timestamp, endTime: slice[slice.length - 1].timestamp, distanceM: lastD - lapStartDist, records: slice });
+    }
+    return laps;
+  }, [records]);
+
+  return { state, elapsedMs, records, start, pause, resume, stop, reset, pushSample, getSession, getLaps, startTime: startTimeRef.current };
 }
