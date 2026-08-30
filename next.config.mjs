@@ -8,6 +8,8 @@ const pwa = withPWA({
 });
 
 /** @type {import(''next'').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+  output: process.env.TAURI_BUILD ? "export" : undefined,
+};
 
 export default pwa(nextConfig);

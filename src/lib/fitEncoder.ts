@@ -184,7 +184,7 @@ export function buildFitFile(records: FitRecord[], session: FitSession): Uint8Ar
     [4, 4, 4, 4, 4, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1]
   );
 
-  // Lap (19)
+  // Lap(s) (19) - auto-lap per 1000m
   writeDefinition(3, 19, [
     { num: 253, size: 4, baseType: 0x86 },
     { num: 2, size: 4, baseType: 0x86 },
@@ -198,23 +198,45 @@ export function buildFitFile(records: FitRecord[], session: FitSession): Uint8Ar
     { num: 10, size: 1, baseType: 0x02 },
     { num: 11, size: 1, baseType: 0x02 },
   ]);
-  writeData(
-    3,
-    [
-      endTs,
-      startTs,
-      session.totalElapsedMs,
-      session.totalTimerMs,
-      Math.round(session.totalDistanceM * 100),
-      session.avgHr ?? 0xff,
-      session.maxHr ?? 0xff,
-      avgSpeedFit,
-      maxSpeedFit,
-      session.avgCadence ?? 0xff,
-      session.maxCadence ?? 0xff,
-    ],
-    [4, 4, 4, 4, 4, 1, 1, 2, 2, 1, 1]
-  );
+  // Build laps from records by 1000m distance
+  const laps: { startTs: number; endTs: number; elapsed: number; dist: number; avgHr: number; maxHr: number; avgSpeed: number; maxSpeed: number; avgCad: number; maxCad: number }[] = [];
+  if (records.length > 0) {
+    let lapStartIdx = 0;
+    let lapStartDist = records[0].distanceM ?? 0;
+    for (let i = 1; i < records.length; i++) {
+      const d = records[i].distanceM ?? 0;
+      if (d - lapStartDist >= 1000) {
+        const slice = records.slice(lapStartIdx, i + 1);
+        const hrs = slice.map((r) => r.heartRate).filter((v): v is number => v != null && v !== 0xff);
+        const cads = slice.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+        const speeds = slice.map((r) => r.speedMs).filter((v): v is number => v != null);
+        const sTs = fitTimestamp(slice[0].timestamp);
+        const eTs = fitTimestamp(slice[slice.length - 1].timestamp);
+        const elapsed = (slice[slice.length - 1].timestamp.getTime() - slice[0].timestamp.getTime());
+        laps.push({ startTs: sTs, endTs: eTs, elapsed, dist: d - lapStartDist, avgHr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : 0xff, maxHr: hrs.length ? Math.max(...hrs) : 0xff, avgSpeed: speeds.length ? Math.round(speeds.reduce((a, b) => a + b, 0) / speeds.length * 1000) : 0, maxSpeed: speeds.length ? Math.round(Math.max(...speeds) * 1000) : 0, avgCad: cads.length ? Math.round(cads.reduce((a, b) => a + b, 0) / cads.length) : 0xff, maxCad: cads.length ? Math.max(...cads) : 0xff });
+        lapStartIdx = i + 1;
+        lapStartDist = d;
+      }
+    }
+    if (lapStartIdx < records.length) {
+      const slice = records.slice(lapStartIdx);
+      const lastD = slice[slice.length - 1].distanceM ?? lapStartDist;
+      const hrs = slice.map((r) => r.heartRate).filter((v): v is number => v != null && v !== 0xff);
+      const cads = slice.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+      const speeds = slice.map((r) => r.speedMs).filter((v): v is number => v != null);
+      const sTs = fitTimestamp(slice[0].timestamp);
+      const eTs = fitTimestamp(slice[slice.length - 1].timestamp);
+      const elapsed = (slice[slice.length - 1].timestamp.getTime() - slice[0].timestamp.getTime()) || 1000;
+      laps.push({ startTs: sTs, endTs: eTs, elapsed, dist: lastD - lapStartDist, avgHr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : 0xff, maxHr: hrs.length ? Math.max(...hrs) : 0xff, avgSpeed: speeds.length ? Math.round(speeds.reduce((a, b) => a + b, 0) / speeds.length * 1000) : 0, maxSpeed: speeds.length ? Math.round(Math.max(...speeds) * 1000) : 0, avgCad: cads.length ? Math.round(cads.reduce((a, b) => a + b, 0) / cads.length) : 0xff, maxCad: cads.length ? Math.max(...cads) : 0xff });
+    }
+  }
+  if (laps.length === 0) {
+    writeData(3, [endTs, startTs, session.totalElapsedMs, session.totalTimerMs, Math.round(session.totalDistanceM * 100), session.avgHr ?? 0xff, session.maxHr ?? 0xff, avgSpeedFit, maxSpeedFit, session.avgCadence ?? 0xff, session.maxCadence ?? 0xff], [4, 4, 4, 4, 4, 1, 1, 2, 2, 1, 1]);
+  } else {
+    for (const lap of laps) {
+      writeData(3, [lap.endTs, lap.startTs, lap.elapsed, lap.elapsed, Math.round(lap.dist * 100), lap.avgHr, lap.maxHr, lap.avgSpeed, lap.maxSpeed, lap.avgCad, lap.maxCad], [4, 4, 4, 4, 4, 1, 1, 2, 2, 1, 1]);
+    }
+  }
 
   // Record (20)
   writeDefinition(4, 20, [
