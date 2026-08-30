@@ -195,7 +195,7 @@ export default function Home() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
-            label={`Heart Rate ${zone ? `· ${zone.label}` : ""}`}
+            label={`Heart Rate ${zone ? `• ${zone.label}` : ""}`}
             value={hr != null ? String(hr) : "--"}
             unit="bpm"
             sub={zone ? `${zone.label}` : "Connect to see HR"}
@@ -219,7 +219,7 @@ export default function Home() {
                 </>
               )}
             </div>
-            <div className="text-sm text-zinc-400">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`} · Stride {strideM != null ? strideM.toFixed(2) : "--"} m {isStationary ? "· Stationary" : isHoldingSpeed ? "· Holding" : ""}</div>
+            <div className="text-sm text-zinc-400">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`} • Stride {strideM != null ? strideM.toFixed(2) : "--"} m</div>
           </div>
           <MetricCard label="Cadence" value={cadDisplay} unit="spm" sub={`${strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"}${isHoldingCad ? " · Holding" : isStationary ? " · Stationary" : ""}`} />
         </div>
@@ -265,7 +265,7 @@ export default function Home() {
                 </>
               )}
             </div>
-            <div className="text-xs text-zinc-500">{recorder.records.length} samples · {recorder.state === "stopped" ? "Ready to import to Garmin Connect" : "1 Hz recording"}</div>
+            <div className="text-xs text-zinc-500">{recorder.records.length} samples • {recorder.state === "stopped" ? "Ready to import to Garmin Connect" : "1 Hz recording"}</div>
           </div>
         </div>
 
@@ -319,7 +319,7 @@ export default function Home() {
           <summary className="cursor-pointer text-sm font-semibold">Help & Troubleshooting</summary>
           <ul className="mt-2 list-disc pl-5 text-sm text-zinc-400 space-y-1">
             <li>Use Chrome or Edge. Firefox/Safari do not support Web Bluetooth.</li>
-            <li>Open via <code className="text-zinc-200">http://localhost:3000</code> · secure context required. <code>http://192.168.x.x</code> will fail.</li>
+            <li>Open via <code className="text-zinc-200">http://localhost:3000</code> • secure context required. <code>http://192.168.x.x</code> will fail.</li>
             <li>On Forerunner: Virtual Run broadcasts HR + pace/cadence. Broadcast HR alone gives only HR.</li>
             <li>If no RSC: check watch is in Virtual Run, not just Broadcast HR.</li>
             <li>Keep tab foreground; background tabs may throttle BLE.</li>
