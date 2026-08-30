@@ -1,4 +1,4 @@
-﻿"use client";
+﻿﻿"use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MetricCard } from "@/components/MetricCard";
 import { useBluetooth } from "@/hooks/useBluetooth";
@@ -6,6 +6,7 @@ import { useRecorder } from "@/hooks/useRecorder";
 import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
 import { getHrZone } from "@/lib/hrZones";
 import { downloadFit } from "@/lib/fitEncoder";
+import { ema, HOLD_MS, STATIONARY_SPEED_MS } from "@/lib/smoothing";
 
 function formatTime(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -24,14 +25,45 @@ export default function Home() {
   const [distanceM, setDistanceM] = useState<number | null>(null);
   const [mock, setMock] = useState(false);
   const [showKmh, setShowKmh] = useState(false);
+  const [smoothSpeed, setSmoothSpeed] = useState<number | null>(null);
+  const [smoothCadence, setSmoothCadence] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
+  const lastNonZeroSpeedRef = useRef<{ v: number; t: number } | null>(null);
+  const lastNonZeroCadRef = useRef<{ v: number; t: number } | null>(null);
+
+  useEffect(() => {
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, []);
 
   const recorder = useRecorder();
 
   const onMetrics = useCallback(
     (m: Partial<{ hr: number | null; speedMs: number | null; cadenceSpm: number | null; strideM: number | null; distanceM: number | null }>) => {
       if (m.hr !== undefined) setHr(m.hr);
-      if (m.speedMs !== undefined) setSpeedMs(m.speedMs);
-      if (m.cadenceSpm !== undefined) setCadence(m.cadenceSpm);
+      if (m.speedMs !== undefined) {
+        setSpeedMs(m.speedMs);
+        const nextSpeed = m.speedMs as number | null;
+        if (nextSpeed != null && nextSpeed >= STATIONARY_SPEED_MS) {
+          lastNonZeroSpeedRef.current = { v: nextSpeed, t: Date.now() };
+        }
+        setSmoothSpeed((prev) => {
+          if (nextSpeed == null) return prev;
+          return ema(prev, nextSpeed);
+        });
+      }
+      if (m.cadenceSpm !== undefined) {
+        setCadence(m.cadenceSpm);
+        const nextCad = m.cadenceSpm as number | null;
+        if (nextCad != null && nextCad > 0) {
+          lastNonZeroCadRef.current = { v: nextCad, t: Date.now() };
+        }
+        setSmoothCadence((prev) => {
+          if (nextCad == null) return prev;
+          return ema(prev, nextCad);
+        });
+      }
       if (m.strideM !== undefined) setStrideM(m.strideM);
       if (m.distanceM !== undefined) setDistanceM(m.distanceM);
     },
@@ -83,8 +115,18 @@ export default function Home() {
   }, [mock, recorder.state]);
 
   const zone = getHrZone(hr ?? 0);
-  const pace = speedMs != null ? paceMinPerKm(speedMs) : "--:--";
-  const kmh = speedMs != null ? speedKmh(speedMs).toFixed(1) : "--";
+  const holdSpeed = lastNonZeroSpeedRef.current && now - lastNonZeroSpeedRef.current.t < HOLD_MS ? lastNonZeroSpeedRef.current.v : null;
+  const holdCad = lastNonZeroCadRef.current && now - lastNonZeroCadRef.current.t < HOLD_MS ? lastNonZeroCadRef.current.v : null;
+  const displaySpeed = smoothSpeed ?? speedMs;
+  const displayCad = smoothCadence ?? cadence;
+  const isStationary = displaySpeed != null && displaySpeed < STATIONARY_SPEED_MS;
+  const isHoldingSpeed = holdSpeed != null && (displaySpeed == null || displaySpeed < STATIONARY_SPEED_MS);
+  const isHoldingCad = holdCad != null && (displayCad == null || displayCad === 0);
+  const paceSpeed = isHoldingSpeed ? holdSpeed! : displaySpeed;
+  const pace = paceSpeed != null && paceSpeed >= STATIONARY_SPEED_MS ? paceMinPerKm(paceSpeed) : isHoldingSpeed ? paceMinPerKm(holdSpeed!) : "--:--";
+  const kmhVal = (isHoldingSpeed ? holdSpeed! : displaySpeed) ?? speedMs;
+  const kmh = kmhVal != null && kmhVal >= STATIONARY_SPEED_MS ? speedKmh(kmhVal).toFixed(1) : isHoldingSpeed ? speedKmh(holdSpeed!).toFixed(1) : "0.0";
+  const cadDisplay = displayCad != null && displayCad > 0 ? String(Math.round(displayCad)) : isHoldingCad ? String(Math.round(holdCad!)) : bt.status === "connected" || mock ? "0" : "--";
   const distKm = distanceM != null ? (distanceM / 1000).toFixed(2) : "0.00";
   const avgPace =
     recorder.records.length && distanceM
@@ -148,7 +190,7 @@ export default function Home() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
-            label={`Heart Rate ${zone ? `� ${zone.label}` : ""}`}
+            label={`Heart Rate ${zone ? `· ${zone.label}` : ""}`}
             value={hr != null ? String(hr) : "--"}
             unit="bpm"
             sub={zone ? `${zone.label}` : "Connect to see HR"}
@@ -172,9 +214,9 @@ export default function Home() {
                 </>
               )}
             </div>
-            <div className="text-sm text-zinc-400">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`} � Stride {strideM != null ? strideM.toFixed(2) : "--"} m</div>
+            <div className="text-sm text-zinc-400">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`} · Stride {strideM != null ? strideM.toFixed(2) : "--"} m {isStationary ? "· Stationary" : isHoldingSpeed ? "· Holding" : ""}</div>
           </div>
-          <MetricCard label="Cadence" value={cadence != null ? String(cadence) : "--"} unit="spm" sub={strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"} />
+          <MetricCard label="Cadence" value={cadDisplay} unit="spm" sub={`${strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"}${isHoldingCad ? " · Holding" : isStationary ? " · Stationary" : ""}`} />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -218,7 +260,7 @@ export default function Home() {
                 </>
               )}
             </div>
-            <div className="text-xs text-zinc-500">{recorder.records.length} samples � {recorder.state === "stopped" ? "Ready to import to Garmin Connect" : "1 Hz recording"}</div>
+            <div className="text-xs text-zinc-500">{recorder.records.length} samples · {recorder.state === "stopped" ? "Ready to import to Garmin Connect" : "1 Hz recording"}</div>
           </div>
         </div>
 
@@ -232,7 +274,7 @@ export default function Home() {
           <summary className="cursor-pointer text-sm font-semibold">Help & Troubleshooting</summary>
           <ul className="mt-2 list-disc pl-5 text-sm text-zinc-400 space-y-1">
             <li>Use Chrome or Edge. Firefox/Safari do not support Web Bluetooth.</li>
-            <li>Open via <code className="text-zinc-200">http://localhost:3000</code> � secure context required. <code>http://192.168.x.x</code> will fail.</li>
+            <li>Open via <code className="text-zinc-200">http://localhost:3000</code> · secure context required. <code>http://192.168.x.x</code> will fail.</li>
             <li>On Forerunner: Virtual Run broadcasts HR + pace/cadence. Broadcast HR alone gives only HR.</li>
             <li>If no RSC: check watch is in Virtual Run, not just Broadcast HR.</li>
             <li>Keep tab foreground; background tabs may throttle BLE.</li>
