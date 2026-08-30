@@ -1,4 +1,4 @@
-﻿"use client";
+﻿﻿"use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MetricCard } from "@/components/MetricCard";
 import { useBluetooth } from "@/hooks/useBluetooth";
@@ -6,6 +6,7 @@ import { useRecorder } from "@/hooks/useRecorder";
 import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
 import { getHrZone } from "@/lib/hrZones";
 import { downloadFit } from "@/lib/fitEncoder";
+import { ema, HOLD_MS, STATIONARY_SPEED_MS } from "@/lib/smoothing";
 
 function formatTime(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -24,14 +25,45 @@ export default function Home() {
   const [distanceM, setDistanceM] = useState<number | null>(null);
   const [mock, setMock] = useState(false);
   const [showKmh, setShowKmh] = useState(false);
+  const [smoothSpeed, setSmoothSpeed] = useState<number | null>(null);
+  const [smoothCadence, setSmoothCadence] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
+  const lastNonZeroSpeedRef = useRef<{ v: number; t: number } | null>(null);
+  const lastNonZeroCadRef = useRef<{ v: number; t: number } | null>(null);
+
+  useEffect(() => {
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(id);
+  }, []);
 
   const recorder = useRecorder();
 
   const onMetrics = useCallback(
     (m: Partial<{ hr: number | null; speedMs: number | null; cadenceSpm: number | null; strideM: number | null; distanceM: number | null }>) => {
       if (m.hr !== undefined) setHr(m.hr);
-      if (m.speedMs !== undefined) setSpeedMs(m.speedMs);
-      if (m.cadenceSpm !== undefined) setCadence(m.cadenceSpm);
+      if (m.speedMs !== undefined) {
+        setSpeedMs(m.speedMs);
+        const nextSpeed = m.speedMs as number | null;
+        if (nextSpeed != null && nextSpeed >= STATIONARY_SPEED_MS) {
+          lastNonZeroSpeedRef.current = { v: nextSpeed, t: Date.now() };
+        }
+        setSmoothSpeed((prev) => {
+          if (nextSpeed == null) return prev;
+          return ema(prev, nextSpeed);
+        });
+      }
+      if (m.cadenceSpm !== undefined) {
+        setCadence(m.cadenceSpm);
+        const nextCad = m.cadenceSpm as number | null;
+        if (nextCad != null && nextCad > 0) {
+          lastNonZeroCadRef.current = { v: nextCad, t: Date.now() };
+        }
+        setSmoothCadence((prev) => {
+          if (nextCad == null) return prev;
+          return ema(prev, nextCad);
+        });
+      }
       if (m.strideM !== undefined) setStrideM(m.strideM);
       if (m.distanceM !== undefined) setDistanceM(m.distanceM);
     },
@@ -83,8 +115,18 @@ export default function Home() {
   }, [mock, recorder.state]);
 
   const zone = getHrZone(hr ?? 0);
-  const pace = speedMs != null ? paceMinPerKm(speedMs) : "--:--";
-  const kmh = speedMs != null ? speedKmh(speedMs).toFixed(1) : "--";
+  const holdSpeed = lastNonZeroSpeedRef.current && now - lastNonZeroSpeedRef.current.t < HOLD_MS ? lastNonZeroSpeedRef.current.v : null;
+  const holdCad = lastNonZeroCadRef.current && now - lastNonZeroCadRef.current.t < HOLD_MS ? lastNonZeroCadRef.current.v : null;
+  const displaySpeed = smoothSpeed ?? speedMs;
+  const displayCad = smoothCadence ?? cadence;
+  const isStationary = displaySpeed != null && displaySpeed < STATIONARY_SPEED_MS;
+  const isHoldingSpeed = holdSpeed != null && (displaySpeed == null || displaySpeed < STATIONARY_SPEED_MS);
+  const isHoldingCad = holdCad != null && (displayCad == null || displayCad === 0);
+  const paceSpeed = isHoldingSpeed ? holdSpeed! : displaySpeed;
+  const pace = paceSpeed != null && paceSpeed >= STATIONARY_SPEED_MS ? paceMinPerKm(paceSpeed) : isHoldingSpeed ? paceMinPerKm(holdSpeed!) : "--:--";
+  const kmhVal = (isHoldingSpeed ? holdSpeed! : displaySpeed) ?? speedMs;
+  const kmh = kmhVal != null && kmhVal >= STATIONARY_SPEED_MS ? speedKmh(kmhVal).toFixed(1) : isHoldingSpeed ? speedKmh(holdSpeed!).toFixed(1) : "0.0";
+  const cadDisplay = displayCad != null && displayCad > 0 ? String(Math.round(displayCad)) : isHoldingCad ? String(Math.round(holdCad!)) : bt.status === "connected" || mock ? "0" : "--";
   const distKm = distanceM != null ? (distanceM / 1000).toFixed(2) : "0.00";
   const avgPace =
     recorder.records.length && distanceM
@@ -174,7 +216,7 @@ export default function Home() {
             </div>
             <div className="text-sm text-zinc-400">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`} • Stride {strideM != null ? strideM.toFixed(2) : "--"} m</div>
           </div>
-          <MetricCard label="Cadence" value={cadence != null ? String(cadence) : "--"} unit="spm" sub={strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"} />
+          <MetricCard label="Cadence" value={cadDisplay} unit="spm" sub={`${strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"}${isHoldingCad ? " · Holding" : isStationary ? " · Stationary" : ""}`} />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
