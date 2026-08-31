@@ -7,23 +7,32 @@ export function LapTrack({ distanceM }: { distanceM: number | null }) {
   const progress = (d % lapLen) / lapLen;
   const totalLaps = Math.ceil(Math.max(d, lapLen) / lapLen);
   const pct = Math.round(progress * 100);
-  const circumference = 2 * Math.PI * 44;
-  const dash = circumference * progress;
+
+  // Running-track (stadium) shape: two straights joined by semicircular bends
+  const r = 30; // bend radius
+  const straight = 32; // length of each straight
+  const cx = 50;
+  const cy = 50;
+  const x1 = cx - straight / 2;
+  const x2 = cx + straight / 2;
+  const yTop = cy - r;
+  const yBot = cy + r;
+  const trackPath = `M ${x1} ${yTop} L ${x2} ${yTop} A ${r} ${r} 0 0 1 ${x2} ${yBot} L ${x1} ${yBot} A ${r} ${r} 0 0 1 ${x1} ${yTop} Z`;
+  const perimeter = 2 * straight + 2 * Math.PI * r; // exact stadium perimeter
+  const dash = perimeter * progress;
 
   return (
     <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 flex items-center gap-4">
       <div className="relative h-[100px] w-[100px] shrink-0">
-        <svg width={100} height={100} className="-rotate-90">
-          <circle cx={50} cy={50} r={44} fill="none" stroke="#27272a" strokeWidth={8} />
-          <circle
-            cx={50}
-            cy={50}
-            r={44}
+        <svg width={100} height={100} viewBox="0 0 100 100">
+          <path d={trackPath} fill="none" stroke="#27272a" strokeWidth={8} />
+          <path
+            d={trackPath}
             fill="none"
             stroke="#22c55e"
             strokeWidth={8}
             strokeLinecap="round"
-            strokeDasharray={`${dash} ${circumference}`}
+            strokeDasharray={`${dash} ${perimeter}`}
             style={{ transition: "stroke-dasharray 0.5s ease" }}
           />
         </svg>

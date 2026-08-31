@@ -33,6 +33,9 @@ export default function Home() {
   const [now, setNow] = useState(0);
   const lastNonZeroSpeedRef = useRef<{ v: number; t: number } | null>(null);
   const lastNonZeroCadRef = useRef<{ v: number; t: number } | null>(null);
+  const lastRscTimeRef = useRef<number | null>(null);
+  const hasGarminDistanceRef = useRef(false);
+  const distanceAtStartRef = useRef<number | null>(null);
 
   useEffect(() => {
     setNow(Date.now());
@@ -43,7 +46,7 @@ export default function Home() {
   const recorder = useRecorder();
 
   const onMetrics = useCallback(
-    (m: Partial<{ hr: number | null; speedMs: number | null; cadenceSpm: number | null; strideM: number | null; distanceM: number | null }>) => {
+    (m: Partial<{ hr: number | null; speedMs: number | null; cadence: number | null; cadenceSpm: number | null; strideM: number | null; distanceM: number | null }>) => {
       if (m.hr !== undefined) setHr(m.hr);
       if (m.speedMs !== undefined) {
         setSpeedMs(m.speedMs);
@@ -56,9 +59,12 @@ export default function Home() {
           return ema(prev, nextSpeed);
         });
       }
-      if (m.cadenceSpm !== undefined) {
-        setCadence(m.cadenceSpm);
-        const nextCad = m.cadenceSpm as number | null;
+      // Fix: useBluetooth sends `cadence`, not `cadenceSpm` — accept both
+      const cadVal = (m as { cadence?: number | null; cadenceSpm?: number | null }).cadence ?? (m as { cadenceSpm?: number | null }).cadenceSpm;
+      const hasCad = (m as { cadence?: unknown }).cadence !== undefined || (m as { cadenceSpm?: unknown }).cadenceSpm !== undefined;
+      if (hasCad) {
+        const nextCad = cadVal as number | null;
+        setCadence(nextCad ?? null);
         if (nextCad != null && nextCad > 0) {
           lastNonZeroCadRef.current = { v: nextCad, t: Date.now() };
         }
@@ -68,7 +74,24 @@ export default function Home() {
         });
       }
       if (m.strideM !== undefined) setStrideM(m.strideM);
-      if (m.distanceM !== undefined) setDistanceM(m.distanceM);
+      if (m.distanceM !== undefined) {
+        if (m.distanceM != null) {
+          hasGarminDistanceRef.current = true;
+          lastRscTimeRef.current = Date.now();
+          setDistanceM(m.distanceM);
+        } else if (!hasGarminDistanceRef.current) {
+          // Fallback: Garmin didn't send total distance — integrate from speed
+          const now = Date.now();
+          const last = lastRscTimeRef.current;
+          const dt = last ? (now - last) / 1000 : 1;
+          lastRscTimeRef.current = now;
+          const curSpeed = m.speedMs as number | null;
+          if (curSpeed != null && curSpeed >= STATIONARY_SPEED_MS) {
+            const add = curSpeed * Math.min(Math.max(dt, 0.2), 2);
+            setDistanceM((prev) => (prev ?? 0) + add);
+          }
+        }
+      }
     },
     []
   );
@@ -84,11 +107,14 @@ export default function Home() {
   useEffect(() => {
     if (recorder.state !== "recording") return;
     const id = window.setInterval(() => {
-      const { hr: h, cadence: c, speedMs: s, distanceM: d } = latestRef.current;
-      recorder.pushSample({ hr: h, cadence: c, speedMs: s, distanceM: d });
+      const { hr: h, cadence: c, speedMs: s } = latestRef.current;
+      const raw = latestRef.current.distanceM ?? 0;
+      const base = distanceAtStartRef.current ?? 0;
+      const sessionD = Math.max(0, raw - base);
+      recorder.pushSample({ hr: h, cadence: c, speedMs: s, distanceM: sessionD });
     }, 1000);
     return () => window.clearInterval(id);
-  }, [recorder]);
+  }, [recorder.state, recorder.pushSample]);
 
   // mock mode
   useEffect(() => {
@@ -132,10 +158,12 @@ export default function Home() {
   const kmhVal = (isHoldingSpeed ? holdSpeed! : displaySpeed) ?? speedMs;
   const kmh = kmhVal != null && kmhVal >= STATIONARY_SPEED_MS ? speedKmh(kmhVal).toFixed(1) : isHoldingSpeed ? speedKmh(holdSpeed!).toFixed(1) : "0.0";
   const cadDisplay = displayCad != null && displayCad > 0 ? String(Math.round(displayCad)) : isHoldingCad ? String(Math.round(holdCad!)) : bt.status === "connected" || mock ? "0" : "--";
-  const distKm = distanceM != null ? (distanceM / 1000).toFixed(2) : "0.00";
+  // Session distance: delta from distance at Start (0 when idle). Keeps raw distanceM for live HR/Pace/Cadence.
+  const sessionDistanceM = recorder.state === "idle" ? 0 : Math.max(0, (distanceM ?? 0) - (distanceAtStartRef.current ?? 0));
+  const distKm = (sessionDistanceM / 1000).toFixed(2);
   const avgPace =
-    recorder.records.length && distanceM
-      ? paceMinPerKm(distanceM / (recorder.elapsedMs / 1000 || 1))
+    recorder.records.length && sessionDistanceM > 0
+      ? paceMinPerKm(sessionDistanceM / (recorder.elapsedMs / 1000 || 1))
       : "--:--";
   const avgHr =
     recorder.records.length
@@ -144,6 +172,17 @@ export default function Home() {
             Math.max(1, recorder.records.filter((r) => r.heartRate).length)
         )
       : null;
+  const avgHrZone = avgHr != null ? getHrZone(avgHr, maxHr) : null;
+
+  const handleStart = useCallback(() => {
+    distanceAtStartRef.current = distanceM ?? 0;
+    recorder.start();
+  }, [distanceM, recorder]);
+
+  const handleReset = useCallback(() => {
+    distanceAtStartRef.current = null;
+    recorder.reset();
+  }, [recorder]);
 
   const handleDownload = () => {
     const session = recorder.getSession();
@@ -183,7 +222,7 @@ export default function Home() {
           </div>
         </div>
         {bt.error ? <div className="mx-auto max-w-6xl px-4 pb-2 text-xs text-amber-400">{bt.error}</div> : null}
-        {!bt.isSupported ? (
+        {bt.isSupported === false ? (
           <div className="mx-auto max-w-6xl px-4 pb-2 text-xs text-red-400">Web Bluetooth not supported. Use Chrome or Edge on Windows. For localhost, use http://localhost:3000</div>
         ) : null}
       </header>
@@ -224,67 +263,100 @@ export default function Home() {
           <MetricCard label="Cadence" value={cadDisplay} unit="spm" sub={`${strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"}${isHoldingCad ? " · Holding" : isStationary ? " · Stationary" : ""}`} />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
-            <div className="text-xs text-zinc-500 uppercase tracking-widest">Time</div>
-            <div className="text-3xl font-mono font-bold tabular-nums">{formatTime(recorder.elapsedMs)}</div>
-            <div className="text-xs text-zinc-500 capitalize">{recorder.state}</div>
-          </div>
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
-            <div className="text-xs text-zinc-500 uppercase tracking-widest">Distance</div>
-            <div className="text-3xl font-bold tabular-nums">{distKm} <span className="text-base text-zinc-400">km</span></div>
-            <div className="text-xs text-zinc-500">From Garmin RSC</div>
-          </div>
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
-            <div className="text-xs text-zinc-500 uppercase tracking-widest">Avg Pace</div>
-            <div className="text-3xl font-bold tabular-nums">{avgPace}</div>
-            <div className="text-xs text-zinc-500">Avg HR {avgHr ?? "--"} bpm</div>
-          </div>
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 flex flex-col justify-center gap-2">
-            <div className="text-xs text-zinc-500 uppercase tracking-widest">Session</div>
-            <div className="flex flex-wrap gap-2">
+        {/* Session Box — unified: header + metrics + chart/track. Distance/chart/track only count after Start */}
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
+          {/* Session header: Start at top */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-900 px-4 py-3 sm:px-5">
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-bold tracking-widest text-white uppercase">Session</h2>
+              <span className={`h-2 w-2 rounded-full ${recorder.state === "recording" ? "bg-emerald-500 animate-pulse" : recorder.state === "paused" ? "bg-amber-500" : recorder.state === "stopped" ? "bg-zinc-500" : "bg-zinc-600"}`} />
+              <span className="text-xs font-mono tabular-nums text-zinc-400">{formatTime(recorder.elapsedMs)}</span>
+              <span className="hidden sm:inline text-xs capitalize text-zinc-500">· {recorder.state}</span>
+              <span className="text-xs text-zinc-500">{recorder.records.length} samples</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               {recorder.state === "idle" && (
-                <button onClick={recorder.start} className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold hover:bg-emerald-500">Start</button>
+                <button onClick={handleStart} className="rounded-full bg-emerald-600 px-6 py-2 text-sm font-semibold text-white hover:bg-emerald-500">Start</button>
               )}
               {recorder.state === "recording" && (
                 <>
-                  <button onClick={recorder.pause} className="rounded-full bg-amber-600 px-5 py-2 text-sm font-semibold hover:bg-amber-500">Pause</button>
-                  <button onClick={recorder.stop} className="rounded-full bg-zinc-800 border border-zinc-700 px-5 py-2 text-sm font-semibold hover:bg-zinc-700">Stop</button>
+                  <button onClick={recorder.pause} className="rounded-full bg-amber-600 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-500">Pause</button>
+                  <button onClick={recorder.stop} className="rounded-full border border-zinc-700 bg-zinc-800 px-5 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700">Stop</button>
                 </>
               )}
               {recorder.state === "paused" && (
                 <>
-                  <button onClick={recorder.resume} className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold hover:bg-emerald-500">Resume</button>
-                  <button onClick={recorder.stop} className="rounded-full bg-zinc-800 border border-zinc-700 px-5 py-2 text-sm font-semibold hover:bg-zinc-700">Stop</button>
+                  <button onClick={recorder.resume} className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500">Resume</button>
+                  <button onClick={recorder.stop} className="rounded-full border border-zinc-700 bg-zinc-800 px-5 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700">Stop</button>
                 </>
               )}
               {recorder.state === "stopped" && (
                 <>
                   <button onClick={handleDownload} className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Download .FIT</button>
-                  <button onClick={recorder.reset} className="rounded-full border border-zinc-700 px-5 py-2 text-sm hover:bg-zinc-900">Reset</button>
+                  <button onClick={handleReset} className="rounded-full border border-zinc-700 px-5 py-2 text-sm text-zinc-300 hover:bg-zinc-800">Reset</button>
                 </>
               )}
             </div>
-            <div className="text-xs text-zinc-500">{recorder.records.length} samples • {recorder.state === "stopped" ? "Ready to import to Garmin Connect" : "1 Hz recording"}</div>
           </div>
-        </div>
 
-        {recorder.state === "stopped" && recorder.records.length > 0 ? (
-          <div className="rounded-2xl border border-emerald-900 bg-emerald-950/30 p-4 text-sm text-emerald-200">
-            Session saved in memory. Click <span className="font-semibold">Download .FIT</span> and import at <a className="underline" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect Import</a>. Validate at fitfileviewer.com if needed.
-          </div>
-        ) : null}
+          {recorder.state === "idle" ? (
+            <div className="px-4 py-3 text-xs text-zinc-500 sm:px-5">Press <span className="font-semibold text-zinc-300">Start</span> to begin recording. Distance, chart and track will stay at zero until then.</div>
+          ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2 rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
-            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Live Chart · HR / Cadence / km/h</div>
-            <LiveChart records={recorder.records} />
+          {/* Session metrics — sessionDistanceM / avgPace / avgHr only meaningful after Start */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 sm:p-5">
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
+              <div className="text-xs text-zinc-500 uppercase tracking-widest">Time</div>
+              <div className="text-3xl font-mono font-bold tabular-nums text-white">{formatTime(recorder.elapsedMs)}</div>
+              <div className="text-xs capitalize text-zinc-500">{recorder.state} · 1 Hz</div>
+            </div>
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
+              <div className="text-xs text-zinc-500 uppercase tracking-widest">Distance</div>
+              <div className="text-3xl font-bold tabular-nums text-white">{distKm} <span className="text-base font-normal text-zinc-400">km</span></div>
+              <div className="text-xs text-zinc-500">Session total</div>
+            </div>
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
+              <div className="text-xs text-zinc-500 uppercase tracking-widest">Avg Pace</div>
+              <div className="text-3xl font-bold tabular-nums text-white">{avgPace} <span className="text-base font-normal text-zinc-400">/km</span></div>
+              <div className="text-xs text-zinc-500">{recorder.records.length ? `${(sessionDistanceM / 1000).toFixed(2)} km` : "—"}</div>
+            </div>
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
+              <div className="text-xs text-zinc-500 uppercase tracking-widest">Avg HR {avgHrZone ? `• ${avgHrZone.label}` : ""}</div>
+              <div className={`text-3xl font-bold tabular-nums ${avgHrZone?.color || "text-white"}`}>{avgHr != null ? avgHr : "--"} <span className="text-base font-normal text-zinc-400">bpm</span></div>
+              <div className="text-xs text-zinc-500">{avgHrZone ? avgHrZone.label : recorder.records.length ? "No HR samples yet" : "—"}</div>
+            </div>
           </div>
-          <div className="space-y-4">
-            <LapTrack distanceM={distanceM} />
-            <HrAlertSettings hr={hr} />
+          <div className="grid grid-cols-1 gap-4 px-4 pb-4 sm:px-5 sm:pb-0 sm:pt-0">
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-zinc-500 uppercase tracking-widest">Samples</div>
+                <div className="text-xs text-zinc-500">{recorder.state === "stopped" ? "Ready for Garmin Connect" : recorder.state === "idle" ? "Not recording" : "Recording…"}</div>
+              </div>
+              <div className="text-2xl font-bold tabular-nums text-white">{recorder.records.length}</div>
+            </div>
           </div>
-        </div>
+
+          {recorder.state === "stopped" && recorder.records.length > 0 ? (
+            <div className="mx-4 mt-4 rounded-xl border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200 sm:mx-5">
+              Session saved in memory. Click <span className="font-semibold">Download .FIT</span> and import at <a className="underline" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect Import</a>. Validate at fitfileviewer.com if needed.
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 sm:p-5">
+            <div className="lg:col-span-2 rounded-xl bg-black/40 border border-zinc-800 p-4">
+              <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Live Chart · HR / Cadence / km/h</div>
+              {recorder.records.length === 0 ? (
+                <div className="flex h-[220px] items-center justify-center rounded-lg border border-dashed border-zinc-700 text-sm text-zinc-500">Start session to record — chart will appear here</div>
+              ) : (
+                <LiveChart records={recorder.records} />
+              )}
+            </div>
+            <div className="space-y-4">
+              <LapTrack distanceM={sessionDistanceM} />
+              <HrAlertSettings hr={hr} />
+            </div>
+          </div>
+        </section>
 
         {recorder.getLaps().length > 0 ? (
           <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
@@ -314,6 +386,22 @@ export default function Home() {
             </div>
           </div>
         ) : null}
+
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 font-mono text-xs">
+          <div className="font-semibold text-zinc-300 mb-1">Debug · Raw BLE</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-400">
+            <span>BT: <span className={bt.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{bt.status}</span> {bt.deviceName ? `(${bt.deviceName})` : ""}</span>
+            <span>HR: {hr ?? "--"} bpm</span>
+            <span>speedMs: {speedMs != null ? speedMs.toFixed(2) : "--"} ({smoothSpeed != null ? smoothSpeed.toFixed(2) : "--"} smooth)</span>
+            <span>cad: {cadence ?? "--"} ({smoothCadence != null ? Math.round(smoothCadence) : "--"} smooth)</span>
+            <span>stride: {strideM != null ? strideM.toFixed(2) : "--"} m</span>
+            <span>dist: {distanceM != null ? distanceM.toFixed(1) : "--"} m {hasGarminDistanceRef.current ? "(Garmin)" : "(integrated)"} / session {sessionDistanceM.toFixed(1)} m</span>
+            <span>records: {recorder.records.length}</span>
+            <span>state: {recorder.state}</span>
+          </div>
+          {bt.error ? <div className="mt-1 text-amber-400">{bt.error}</div> : null}
+          {bt.status === "connected" && (speedMs == null || cadence == null) ? <div className="mt-1 text-amber-400">RSC connected but no speed/cadence yet — start Virtual Run activity on watch and start moving (treadmill). If still 0, check watch is in Virtual Run, not Broadcast HR.</div> : null}
+        </div>
 
         <details className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4">
           <summary className="cursor-pointer text-sm font-semibold">Help & Troubleshooting</summary>

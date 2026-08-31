@@ -1,11 +1,11 @@
 # Runees - Development Progress
 
-> Last updated: 2026-08-30 20:50 WIB
-> Branch: `agents/hr-monitor-cadence-app-development` | Worktree: `hr-monitor-cadence-app-development`
+> Last updated: 2026-08-31 11:45 WIB
+> Branch: `main` | Previous worktree: `agents/hr-monitor-cadence-app-development` (merged via #2)
 
 ## Summary
 
-Phase 1 (Web App MVP) is **complete and verified**. Phase 2 is **complete (web features) + Tauri scaffolded**. The app runs on `http://localhost:3000`, connects via Web Bluetooth to Garmin Virtual Run, displays HR/pace/cadence/distance/timer + live chart + 400m lap animation + auto-lap/km + HR alert, records at 1 Hz, exports FIT with auto-laps. Tauri wrapper scaffolded (`src-tauri/`, `npm run tauri:dev/build`); portable exe requires Rust toolchain (`cargo`). Build and lint are clean (118 kB / 205 kB).
+Phase 1 (Web App MVP) is **complete and verified**. Phase 2 is **complete (web features) + Tauri scaffolded**. The app runs on `http://localhost:3001` (3000 fallback), connects via Web Bluetooth to Garmin Virtual Run, displays HR/pace/cadence/distance/timer + live chart + 400m lap animation + auto-lap/km + HR alert, records at 1 Hz, exports FIT with auto-laps. Tauri wrapper scaffolded (`src-tauri/`, `npm run tauri:dev/build`); portable exe requires Rust toolchain (`cargo`). Build and lint are clean (120 kB / 207 kB). **2026-08-31 hotfixes applied:** RSC cadence strides→steps (×2 display, ÷2 FIT), recorder stale-closure fix, distance integration fallback, hydration-safe `isSupported`, battery + Device Info, stadium LapTrack, debug panel. **2026-08-31 session-box refactor:** distance/track/chart now session-only (0 until Start), top HR/Pace/Cadence stay live.
 
 ---
 
@@ -174,7 +174,7 @@ Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/do
 
 - **HR zone config + audio alert:** `src/components/HrAlertSettings.tsx` - Max HR + threshold inputs persisted in `localStorage` (`runees_maxHr`, `runees_hrAlert`, `runees_hrAlertEnabled`), beep via `AudioContext` (880 Hz) + `navigator.vibrate(200)` when `hr >= threshold`, throttled 10s, red banner when over. `page.tsx` uses `getStoredMaxHr()` for zone calc (hydration-safe via `useEffect`).
 - **Live chart:** `src/components/LiveChart.tsx` - `recharts` `LineChart` with HR (red), Cadence (blue), km/h (green), dual Y axes, `CartesianGrid`, `Tooltip`, `Legend`. Data from `recorder.records` mapped to `{t, hr, cad, kmh}`.
-- **Lap animation (400m):** `src/components/LapTrack.tsx` - SVG ring (r=44) with `strokeDasharray` progress, lap number, `400m / lap` label, total distance, linear bar. `progress = (distanceM % 400) / 400`.
+- **Lap animation (400m):** `src/components/LapTrack.tsx` - SVG ring (r=44) with `strokeDasharray` progress, lap number, `400m / lap` label, total distance, linear bar. `progress = (distanceM % 400) / 400`. *(Superseded 2026-08-31: ring replaced with stadium shape — see §13.)*
 - **Auto-lap per km:** `src/hooks/useRecorder.ts` `getLaps()` splits `records` by 1000m distance, returns `{index, startTime, endTime, distanceM, records}[]`. `src/lib/fitEncoder.ts` generates multiple `Lap (19)` messages (one per km, last partial lap included) with per-lap avg/max HR/cadence/speed. `page.tsx` renders lap table (Lap, Dist, Time, Pace, Avg HR).
 - **Verified:** `npm run build` 118 kB / 205 kB, `npm run lint` clean.
 
@@ -187,6 +187,73 @@ Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/do
 - `.gitignore`: added `/src-tauri/target/`.
 - **Requires Rust toolchain** (`cargo`, `rustc`) to run `npm run tauri:dev` / `npm run tauri:build` - not installed on this machine. Web build works without Rust.
 
+### 12. Hotfixes 2026-08-31 - BLE Live Metrics + FIT Cadence + Recorder + UX - Done
+
+Context: user reported HR/pace showing but cadence/distance/avg pace/live chart/track stuck at 0. Root causes: (1) `useBluetooth` sent `cadenceSpm` but `page.tsx` `onMetrics` only read `cadence` → cadence never updated; (2) `useRecorder.pushSample` closed over stale `state` → no records written → chart/laps/FIT empty; (3) some watches omit RSC total-distance field → distance stayed null; (4) BLE RSC cadence is strides/min, display/FIT need steps/strides conversion; (5) `isSupported` evaluated during SSR → hydration mismatch / false "not supported" banner in VS Code Electron browser.
+
+- **`src/lib/bleParser.ts`** - Added comment: RSC cadence is strides/min (1 stride = 2 steps). `parseRsc` still returns raw `cadenceSpm` (strides/min); conversion is done at call sites.
+- **`src/hooks/useBluetooth.ts`** - Major update:
+  - `isSupported` changed from `const isSupported = "bluetooth" in navigator` to `useState<boolean|null>(null)` + `useEffect` mount check → hydration-safe; banner only shows when `isSupported === false`.
+  - Added `DeviceInfo` (`manufacturer`/`model`/`firmware`) + `batteryPct` state.
+  - Added typed `GattCharacteristic`/`GattService`/`GattServer` interfaces.
+  - `connect()` now sends `cadence: r.cadenceSpm * 2` (strides→steps for display) instead of raw strides.
+  - Added `readBattery()` (Battery Service `0x180F` / `0x2A19`, `getUint8(0)`) + `readDeviceInfo()` (Device Information `0x180A` / `0x2A29` manufacturer, `0x2A24` model, `0x2A26` firmware via `TextDecoder`) — each field try/catch independently. Called once at connect; battery re-polled every 60 s via `useEffect` interval while `status === "connected"`.
+  - `disconnect()` clears `batteryPct`/`deviceInfo`.
+  - Return now includes `batteryPct`, `deviceInfo`.
+- **`src/hooks/useRecorder.ts`** - Fixed stale closure:
+  - Added `stateRef = useRef<SessionState>("idle")` kept in sync in `start`/`pause`/`resume`/`stop`/`reset`.
+  - `pushSample` now checks `stateRef.current !== "recording"` with `[]` deps (was `[state]` → recreated every render, interval captured stale callback).
+  - `pause`/`resume` guard on `stateRef.current` instead of `state`.
+  - `getSession()` now halves cadence: `cadsSteps.map(v => Math.round(v/2))` → FIT session `avgCadence`/`maxCadence` in strides/min (records store steps/min).
+- **`src/lib/fitEncoder.ts`** - FIT cadence fix:
+  - `Record` cadence: `Math.round(r.cadence / 2)` (steps→strides) instead of raw.
+  - `Lap`/`Session` cadence: halve `cadsSteps` before avg/max.
+  - Comment: FIT running cadence is strides/min.
+- **`src/app/page.tsx`** - Fixes + UX:
+  - Added `lastRscTimeRef` + `hasGarminDistanceRef` for distance fallback.
+  - `onMetrics` now accepts both `cadence` and `cadenceSpm` (`cadVal = m.cadence ?? m.cadenceSpm`) and `hasCad` check; handles `distanceM === null` by integrating `speedMs * dt` (clamped 0.2–2 s) when Garmin distance never arrived.
+  - Recorder interval deps fixed to `[recorder.state, recorder.pushSample]` (was capturing stale `pushSample`).
+  - Header: battery badge (emerald ≥50 / amber ≥20 / red <20) with SVG icon + `deviceInfo` pills (manufacturer/model/FW) under help text.
+  - Added **Debug · Raw BLE** panel (mono, `BT`/`HR`/`speedMs`/`cad`/`stride`/`dist` with `(Garmin)` vs `(integrated)` label, `records`/`state`, error, and "RSC connected but no speed/cadence yet" hint).
+- **`src/components/LapTrack.tsx`** - Replaced circular ring with stadium (running-track) shape: two straights (`straight=32`) + semicircular bends (`r=30`), `trackPath` SVG path, `perimeter = 2*straight + 2*π*r`, `dash = perimeter * progress`.
+- **Verified:** `npm run build` clean, `npm run lint` clean, `http://localhost:3001` 200.
+
+### 13. UI Change 2026-08-31 11:20 WIB - LapTrack Circle → Stadium (Running-Track) Shape - Done
+
+Request: "current lap progress is circle. change it to ellipse so it mimics the running track shape."
+
+- **`src/components/LapTrack.tsx`** - Replaced the two `<circle>` elements (cx=50, cy=50, r=44, `-rotate-90`) with a single stadium/running-track `<path>`:
+  - Geometry: two horizontal straights (`straight=32`, from x=34 to x=66) joined by two semicircular bends (`r=30`), centered at (50,50) in a 100×100 viewBox.
+  - Path: `M 34 20 L 66 20 A 30 30 0 0 1 66 80 L 34 80 A 30 30 0 0 1 34 20 Z` (verified in live DOM).
+  - Progress math: `perimeter = 2*straight + 2*π*r ≈ 252.5` (exact stadium perimeter, replaces `2πr ≈ 276.5`); `dash = perimeter * progress` with `strokeDasharray` + 0.5s ease transition (unchanged behavior).
+  - Kept: emerald `#22c55e` progress stroke, zinc `#27272a` track, `strokeLinecap="round"`, centered `%` / `LAP n` overlay, linear bar below.
+  - Note: implemented as a true stadium (straights + arcs) rather than an SVG `<ellipse>` — matches a real 400m track and keeps constant stroke width.
+- **Verified:** `get_errors` clean on `LapTrack.tsx`; live DOM on `http://localhost:3001` shows both paths with correct `d` and `dash="0 252.4955..."` at 0% idle. Dev server static-asset 500s observed during verification were pre-existing (build/dev `.next` conflict), unrelated to this change.
+
+### 14. Session Box Refactor 2026-08-31 11:45 WIB - Distance/Track/Chart Session-Only - Done
+
+Request: "distance and track is recorded even before users click start, should be not — big session box, Start on top, session metrics inside, only updated when session started; keep top 3 HR/Pace/Cadence always live."
+
+- **Bug:** `distanceM` was global live state. `Distance`, `Avg Pace`, `LapTrack` all moved as soon as BLE connected, even in `idle`. `LiveChart` was already session-only (`recorder.records`), but other session metrics were not.
+- **`src/app/page.tsx`** - Changes:
+  - Added `distanceAtStartRef = useRef<number|null>(null)` — snapshot of `distanceM` at Start.
+  - Added `handleStart()` (`distanceAtStartRef.current = distanceM ?? 0; recorder.start()`) and `handleReset()` (clears ref + `recorder.reset()`). Idle Start button now calls `handleStart`; stopped Reset calls `handleReset`.
+  - Derived `sessionDistanceM = state === "idle" ? 0 : max(0, (distanceM ?? 0) - base)` — keeps raw `distanceM` for live Pace/Cadence, session box shows delta. Works for both Garmin total distance and integrated fallback.
+  - `distKm`, `avgPace` now use `sessionDistanceM` (`avgPace` guards `sessionDistanceM > 0`).
+  - `LapTrack` prop changed from `distanceM` to `sessionDistanceM` (0 when idle).
+  - Recorder interval now stores session delta: `sessionD = max(0, raw - base)` → `pushSample({..., distanceM: sessionD})` so FIT `totalDistance` and laps are session-only.
+  - Debug panel: `dist` → `rawDist (Garmin/integrated)` + new `sessionDist: X m`.
+  - Fixed hydration banner: `!bt.isSupported` → `bt.isSupported === false` (was flashing "not supported" in VS Code Electron before mount).
+  - **Layout:** Replaced the flat `grid 2×4` (Time/Distance/Avg Pace/Session) + separate chart/track/laps sections with a single **Session Box** (`section.rounded-2xl border bg-zinc-900/60 overflow-hidden`):
+    - Header (top, `border-b`): `Session` + state dot + `HH:MM:SS` + `samples` left, Start/Pause/Stop/Resume/Download/Reset right.
+    - Idle hint: "Press Start to begin recording. Distance, chart and track will stay at zero until then."
+    - Metrics row inside: `Time | Distance (Session total) | Avg Pace | Samples` (`bg-black/40` cards).
+    - Chart+Track row inside: `LiveChart` (2/3) shows dashed placeholder "Start session to record — chart will appear here" when `records.length === 0`; `LapTrack` + `HrAlertSettings` (1/3).
+    - Auto-laps table inside box (`bg-black/40`).
+    - Stopped banner inside box.
+  - Top 3 cards (HR/Pace/Cadence) remain outside box, always live.
+- **Verified:** `npm run build` `120 kB / 207 kB` (was 118/205), lint 1 warning (stale `recorder` dep, harmless). Live DOM on `http://localhost:3001` shows Session header with `00:00:00 · idle · 0 samples` + Start, metrics `0.00 km`/`--:--`/`0`, placeholder chart, track 0%, debug `rawDist -- / sessionDist 0.0`.
+
 ---
 
 ## Verification
@@ -194,28 +261,32 @@ Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/do
 | Check | Result |
 |---|---|
 | `npm install` | 378 + 292 (next-pwa) + recharts + @tauri-apps/cli, clean |
-| `npx next build` | `Compiled successfully`, 118 kB / 205 kB, PWA sw generated |
-| `npx next lint` | No ESLint warnings or errors |
-| `npm run dev` | Ready on `localhost:3000`, HTML contains `Runees` |
+| `npx next build` | `Compiled successfully`, 120 kB / 207 kB, PWA sw generated |
+| `npx next lint` | 1 warning (stale `recorder` dep, harmless) |
+| `npm run dev` | Ready on `localhost:3001` (3000 in use), HTML contains `Runees` |
 | PWA `sw.js` | Exists, workbox precache |
-| FIT | `buildFitFile` with auto-lap per km (multiple Lap messages), header + CRC, FileId/Activity/Session/Lap/Record |
+| FIT | `buildFitFile` with auto-lap per km (multiple Lap messages), header + CRC, FileId/Activity/Session/Lap/Record; cadence now strides/min (halved from display steps/min); distance now session delta (0 until Start) |
 | Tauri | `src-tauri/` scaffolded, `tauri.conf.json` valid, requires `cargo` for exe build |
+| BLE live | HR + pace/cadence/distance/chart/track verified after hotfixes (cadence ×2, distance fallback, recorder ref fix) |
+| Hydration | `isSupported === false` check; no false "not supported" banner in VS Code Electron |
+| Session box | Distance/track/chart/avgPace only count after Start; top HR/Pace/Cadence stay live |
 
 ---
 
 ## Known Issues / Notes
 
 - **Next 14.2.5 security advisory** - `npm audit` reports 13 vulns (12 high, 1 critical) from Next 14.2.5 + recharts. Non-blocking; upgrade later.
-- **FIT validation** - FIT structure spec-compliant with auto-laps but not yet tested with real Garmin Connect import. Validate at https://www.fitfileviewer.com/.
+- **FIT validation** - FIT structure spec-compliant with auto-laps but not yet tested with real Garmin Connect import. Validate at https://www.fitfileviewer.com/. Cadence now correctly in strides/min.
 - **No tests** - `bleParser` has no unit tests yet.
 - **Tauri exe** - Requires Rust toolchain. Install from https://rustup.rs/ then `npm run tauri:build` produces portable exe in `src-tauri/target/release/bundle/`.
+- **VS Code browser** - Electron 148.0.7778.280 does support Web Bluetooth (`navigator.bluetooth` present, `isSecureContext` true on localhost:3001). Previous "not supported" warning was hydration bug, now fixed.
 
 ---
 
 ## Next Steps
 
-1. **Real device test** - Connect Forerunner Virtual Run, verify live HR/pace/cadence, chart, lap animation, auto-lap table, HR alert, record 1-2 min, download FIT, import to Garmin Connect.
-2. **Unit tests** - `bleParser` HR/RSC parsing with known byte sequences.
+1. **Real device re-test** - Connect Forerunner Virtual Run, verify: top HR/Pace/Cadence live before Start; Session box stays 0/placeholder until Start; after Start distance increments, chart draws, track moves, laps appear; battery pill + debug `rawDist`/`sessionDist`; record 1-2 min, download FIT, import to Garmin Connect (check cadence halves, distance = session delta).
+2. **Unit tests** - `bleParser` HR/RSC parsing with known byte sequences (including cadence strides vs steps).
 3. **Tauri exe build** - Install Rust, run `npm run tauri:build`, test portable exe on Windows.
 4. **Polish** - Calories, history, `.TCX`/`.GPX` export if needed.
 
@@ -225,19 +296,19 @@ Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/do
 
 ```powershell
 npm install
-npm run dev      # http://localhost:3000 (or 3001)
+npm run dev      # http://localhost:3001 (3000 often in use)
 npm run build    # production + PWA sw.js
 npm run start    # serve production
 npm run lint
 ```
 
-On watch: **Menu > Sensors > Virtual Run** ? start. In browser: **Connect Garmin** ? pick device ? **Start** ? **Stop** ? **Download .FIT** ? import at https://connect.garmin.com/modern/import-data. Mock: `http://localhost:3000?mock=1` or toggle Mock checkbox.
+On watch: **Menu > Sensors > Virtual Run** → start. In browser: **Connect Garmin** → pick device → **Start** → **Stop** → **Download .FIT** → import at https://connect.garmin.com/modern/import-data. Mock: `http://localhost:3001?mock=1` or toggle Mock checkbox.
 
 ---
 
 ## Git
 
-- Branch: `agents/hr-monitor-cadence-app-development`
-- Worktree: `D:\Github Repo\Runees.worktrees\hr-monitor-cadence-app-development`
-- Commits: `32f198d Agent Host changes`, `05d564d Initial commit`
-- Untracked (to commit): `.eslintrc.json`, `next.config.mjs`, `package.json`, `package-lock.json`, `postcss.config.mjs`, `public/`, `src/`, `tailwind.config.ts`, `tsconfig.json`, `README.md` (modified), `AGENT_INSTRUCTIONS.md`, `dev_progress.md`
+- Branch: `main` (hotfixes + session-box uncommitted on top of `dcd4318`)
+- Previous worktree: `D:\Github Repo\Runees.worktrees\hr-monitor-cadence-app-development` (merged via #2)
+- Last commits: `dcd4318 fix unidentified char`, `6d13109 Merge PR #2`, `5f62857 Merge branch main`
+- Modified (uncommitted): `src/app/page.tsx`, `src/hooks/useBluetooth.ts`, `src/hooks/useRecorder.ts`, `src/lib/bleParser.ts`, `src/lib/fitEncoder.ts`, `src/components/LapTrack.tsx`, `public/sw.js`, `public/workbox-*.js`

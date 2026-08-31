@@ -208,7 +208,8 @@ export function buildFitFile(records: FitRecord[], session: FitSession): Uint8Ar
       if (d - lapStartDist >= 1000) {
         const slice = records.slice(lapStartIdx, i + 1);
         const hrs = slice.map((r) => r.heartRate).filter((v): v is number => v != null && v !== 0xff);
-        const cads = slice.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+        const cadsSteps = slice.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+        const cads = cadsSteps.map((v) => Math.round(v / 2));
         const speeds = slice.map((r) => r.speedMs).filter((v): v is number => v != null);
         const sTs = fitTimestamp(slice[0].timestamp);
         const eTs = fitTimestamp(slice[slice.length - 1].timestamp);
@@ -222,7 +223,8 @@ export function buildFitFile(records: FitRecord[], session: FitSession): Uint8Ar
       const slice = records.slice(lapStartIdx);
       const lastD = slice[slice.length - 1].distanceM ?? lapStartDist;
       const hrs = slice.map((r) => r.heartRate).filter((v): v is number => v != null && v !== 0xff);
-      const cads = slice.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+      const cadsSteps = slice.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+      const cads = cadsSteps.map((v) => Math.round(v / 2));
       const speeds = slice.map((r) => r.speedMs).filter((v): v is number => v != null);
       const sTs = fitTimestamp(slice[0].timestamp);
       const eTs = fitTimestamp(slice[slice.length - 1].timestamp);
@@ -251,7 +253,8 @@ export function buildFitFile(records: FitRecord[], session: FitSession): Uint8Ar
     const hr = r.heartRate ?? 0xff;
     const speed = r.speedMs != null ? Math.round(r.speedMs * 1000) : 0xffff;
     const dist = r.distanceM != null ? Math.round(r.distanceM * 100) : 0xffffffff;
-    const cad = r.cadence ?? 0xff;
+    // FIT running cadence is strides/min (half of steps/min). Convert back.
+    const cad = r.cadence != null ? Math.round(r.cadence / 2) : 0xff;
     writeData(4, [ts, hr, speed, dist, cad], [4, 1, 2, 4, 2]);
   }
 

@@ -46,6 +46,8 @@ export function parseRsc(data: DataView): RscMeasurement {
   const speedRaw = data.getUint16(offset, true);
   const speedMs = speedRaw / 256;
   offset += 2;
+  // BLE RSC cadence is strides/min (1 stride = 2 steps). Display as steps/min = strides*2.
+  // Keep raw strides for FIT (FIT spec stores running cadence as strides/min).
   const cadenceSpm = data.getUint8(offset);
   offset += 1;
   let strideM: number | null = null;

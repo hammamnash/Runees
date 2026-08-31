@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { parseHeartRate, parseRsc } from "@/lib/bleParser";
 
 export type BleStatus = "disconnected" | "connecting" | "connected";
@@ -13,12 +13,29 @@ export interface LiveMetrics {
   isRunning: boolean | null;
 }
 
+interface GattCharacteristic {
+  readValue: () => Promise<DataView>;
+  startNotifications: () => Promise<GattCharacteristic>;
+  addEventListener: (e: string, cb: (ev: Event) => void) => void;
+}
+interface GattService {
+  getCharacteristic: (u: number) => Promise<GattCharacteristic>;
+}
+interface GattServer {
+  getPrimaryService: (u: number) => Promise<GattService>;
+}
+
 export function useBluetooth(onMetrics: (m: Partial<LiveMetrics>) => void) {
   const [status, setStatus] = useState<BleStatus>("disconnected");
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const deviceRef = useRef<unknown>(null);
-  const isSupported = typeof navigator !== "undefined" && "bluetooth" in navigator;
+  // null = unknown (SSR / pre-mount). Resolved after mount to avoid hydration mismatch:
+  // the "not supported" banner must not render on the server.
+  const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  useEffect(() => {
+    setIsSupported(typeof navigator !== "undefined" && "bluetooth" in navigator);
+  }, []);
 
   const disconnect = useCallback(async () => {
     try {
@@ -31,7 +48,7 @@ export function useBluetooth(onMetrics: (m: Partial<LiveMetrics>) => void) {
 
   const connect = useCallback(async () => {
     setError(null);
-    if (!isSupported) {
+    if (isSupported === false) {
       setError("Web Bluetooth not supported. Use Chrome or Edge on Windows.");
       return;
     }
@@ -40,7 +57,7 @@ export function useBluetooth(onMetrics: (m: Partial<LiveMetrics>) => void) {
       const nav = navigator as unknown as { bluetooth: { requestDevice: (opts: unknown) => Promise<unknown> } };
       const device = (await nav.bluetooth.requestDevice({
         filters: [{ services: [0x180d] }, { services: [0x1814] }],
-        optionalServices: [0x180d, 0x1814, 0x180f, 0x180a],
+        optionalServices: [0x180d, 0x1814],
       })) as { name?: string; gatt: { connect: () => Promise<unknown> }; addEventListener: (e: string, cb: () => void) => void };
       deviceRef.current = device;
       setDeviceName(device.name || "Garmin");
@@ -48,9 +65,7 @@ export function useBluetooth(onMetrics: (m: Partial<LiveMetrics>) => void) {
         setStatus("disconnected");
         setError("Device disconnected. Click Connect to reconnect.");
       });
-      const server = (await device.gatt.connect()) as {
-        getPrimaryService: (u: number) => Promise<{ getCharacteristic: (u: number) => Promise<{ startNotifications: () => Promise<void>; addEventListener: (e: string, cb: (ev: Event) => void) => void }> }>;
-      };
+      const server = (await device.gatt.connect()) as GattServer;
       try {
         const hrService = await server.getPrimaryService(0x180d);
         const hrChar = await hrService.getCharacteristic(0x2a37);
@@ -74,7 +89,7 @@ export function useBluetooth(onMetrics: (m: Partial<LiveMetrics>) => void) {
           const r = parseRsc(dv);
           onMetrics({
             speedMs: r.speedMs,
-            cadence: r.cadenceSpm,
+            cadence: r.cadenceSpm * 2, // RSC is strides/min → display steps/min (1 stride = 2 steps)
             strideM: r.strideM,
             distanceM: r.distanceM,
             isRunning: r.isRunning,

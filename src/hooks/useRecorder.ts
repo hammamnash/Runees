@@ -12,6 +12,7 @@ export function useRecorder() {
   const pausedAccumRef = useRef(0);
   const pauseStartRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
+  const stateRef = useRef<SessionState>("idle");
   const latestRef = useRef<{ hr: number | null; cadence: number | null; speedMs: number | null; distanceM: number | null }>({
     hr: null,
     cadence: null,
@@ -34,25 +35,28 @@ export function useRecorder() {
     pauseStartRef.current = null;
     setElapsedMs(0);
     setRecords([]);
+    stateRef.current = "recording";
     setState("recording");
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = window.setInterval(tick, 200);
   }, [tick]);
 
   const pause = useCallback(() => {
-    if (state !== "recording") return;
+    if (stateRef.current !== "recording") return;
     pauseStartRef.current = Date.now();
+    stateRef.current = "paused";
     setState("paused");
     if (timerRef.current) window.clearInterval(timerRef.current);
-  }, [state]);
+  }, []);
 
   const resume = useCallback(() => {
-    if (state !== "paused" || pauseStartRef.current == null) return;
+    if (stateRef.current !== "paused" || pauseStartRef.current == null) return;
     pausedAccumRef.current += Date.now() - pauseStartRef.current;
     pauseStartRef.current = null;
+    stateRef.current = "recording";
     setState("recording");
     timerRef.current = window.setInterval(tick, 200);
-  }, [state, tick]);
+  }, [tick]);
 
   const stop = useCallback(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -61,6 +65,7 @@ export function useRecorder() {
       pauseStartRef.current = null;
     }
     tick();
+    stateRef.current = "stopped";
     setState("stopped");
   }, [tick]);
 
@@ -71,32 +76,35 @@ export function useRecorder() {
     pauseStartRef.current = null;
     setElapsedMs(0);
     setRecords([]);
+    stateRef.current = "idle";
     setState("idle");
   }, []);
 
   const pushSample = useCallback(
     (sample: { hr: number | null; cadence: number | null; speedMs: number | null; distanceM: number | null }) => {
       latestRef.current = sample;
-      if (state === "recording") {
-        setRecords((prev) => [
-          ...prev,
-          {
-            timestamp: new Date(),
-            heartRate: sample.hr,
-            cadence: sample.cadence,
-            speedMs: sample.speedMs,
-            distanceM: sample.distanceM,
-          },
-        ]);
-      }
+      // Use ref to avoid stale closure — state in deps would recreate callback every render
+      if (stateRef.current !== "recording") return;
+      setRecords((prev) => [
+        ...prev,
+        {
+          timestamp: new Date(),
+          heartRate: sample.hr,
+          cadence: sample.cadence,
+          speedMs: sample.speedMs,
+          distanceM: sample.distanceM,
+        },
+      ]);
     },
-    [state]
+    []
   );
 
   const getSession = useCallback((): FitSession | null => {
     if (!startTimeRef.current) return null;
     const hrs = records.map((r) => r.heartRate).filter((v): v is number => v != null && v !== 0xff);
-    const cads = records.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+    // records store steps/min (display), FIT expects strides/min → halve for session
+    const cadsSteps = records.map((r) => r.cadence).filter((v): v is number => v != null && v !== 0xff);
+    const cads = cadsSteps.map((v) => Math.round(v / 2));
     const speeds = records.map((r) => r.speedMs).filter((v): v is number => v != null);
     const totalDistanceM = records.length ? (records[records.length - 1].distanceM ?? 0) : 0;
     return {
