@@ -1,3 +1,5 @@
+// legacy reference. 1 BLE connection for SRC and HR
+
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseHeartRate, parseRsc } from "@/lib/bleParser";
@@ -97,7 +99,7 @@ export function useBluetooth(onMetrics: (m: Partial<LiveMetrics>) => void) {
         });
       } catch (e) {
         console.warn("RSC service not available - enable Virtual Run on watch", e);
-        setError("Connected but no Running Speed/Cadence. Enable Virtual Run on your Forerunner.");
+        setError("Connected but no Running Speed/Cadence. Enable Virtual Run on your watch.");
       }
       setStatus("connected");
     } catch (e: unknown) {

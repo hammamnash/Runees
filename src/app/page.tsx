@@ -114,6 +114,15 @@ export default function Home() {
   const footpod = useBleSource("footpod", onFootpodMetrics);
   const heartrate = useBleSource("heartrate", onHrMetrics);
 
+  // Derived HR card state: if footpod (watch) is connected it also provides HR,
+  // so HR section should show as connected via shared device until a dedicated strap is chosen.
+  const hrIsDedicated = heartrate.status === "connected";
+  const hrIsShared = !hrIsDedicated && heartrate.status !== "connecting" && footpod.status === "connected";
+  const hrCardStatus = hrIsDedicated ? heartrate.status : hrIsShared ? "connected" as const : heartrate.status;
+  const hrCardName = hrIsDedicated ? heartrate.deviceName : hrIsShared ? footpod.deviceName : heartrate.deviceName;
+  const hrCardBattery = hrIsDedicated ? heartrate.batteryPct : hrIsShared ? footpod.batteryPct : heartrate.batteryPct;
+  const hrCardInfo = hrIsDedicated ? heartrate.deviceInfo : hrIsShared ? footpod.deviceInfo : heartrate.deviceInfo;
+
   // Fallback: if strap disconnects, periodically check if footpod HR should take over
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -270,30 +279,44 @@ export default function Home() {
                 ) : null}
               </div>
             </div>
-            {/* Heart Rate */}
+            {/* Heart Rate — shows shared watch HR when footpod connected and no dedicated strap */}
             <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${heartrate.status === "connected" ? "bg-emerald-500" : heartrate.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                  <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
                   <span className="text-sm font-semibold text-white">Heart Rate</span>
                   <span className="text-xs text-zinc-500">HR</span>
                 </div>
-                <span className="text-xs text-zinc-400">{heartrate.status === "connected" ? heartrate.deviceName || "Connected" : heartrate.status === "connecting" ? "Connecting..." : "Not connected"}</span>
+                <span className="text-xs text-zinc-400">{hrCardStatus === "connected" ? (hrCardName || "Connected") : hrCardStatus === "connecting" ? "Connecting..." : "Not connected"}</span>
               </div>
-              {heartrate.deviceName ? <div className="text-xs text-zinc-500 truncate">{heartrate.deviceName}{heartrate.batteryPct != null ? ` • ${heartrate.batteryPct}%` : ""}{heartrate.deviceInfo?.model ? ` • ${heartrate.deviceInfo.model}` : ""}</div> : null}
+              {hrCardName ? (
+                <div className="text-xs text-zinc-500 truncate">
+                  {hrCardName}
+                  {hrCardBattery != null ? ` • ${hrCardBattery}%` : ""}
+                  {hrCardInfo?.model ? ` • ${hrCardInfo.model}` : ""}
+                  {hrIsShared ? <span className="ml-1 text-zinc-400">(via Foot Pod)</span> : null}
+                </div>
+              ) : null}
+              {hrIsShared ? <div className="text-xs text-zinc-500">Using watch HR. Add a dedicated strap for more accurate HR.</div> : null}
               {heartrate.error ? <div className="text-xs text-amber-400">{heartrate.error}</div> : null}
               {heartrate.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
               <div className="flex flex-wrap gap-2">
-                {heartrate.status !== "connected" ? (
+                {hrIsDedicated ? (
+                  <button onClick={heartrate.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
+                ) : hrIsShared ? (
+                  <>
+                    <button onClick={heartrate.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Add Another</button>
+                    <button onClick={footpod.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
+                  </>
+                ) : heartrate.status !== "connected" ? (
                   <button onClick={heartrate.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Choose HR Strap</button>
                 ) : (
                   <button onClick={heartrate.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
                 )}
-                {(heartrate.deviceId || heartrate.deviceName) && heartrate.status !== "connecting" ? (
+                {(heartrate.deviceId || heartrate.deviceName) && heartrate.status !== "connecting" && !hrIsShared ? (
                   <button onClick={heartrate.forget} className="rounded-full border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-900">Forget</button>
                 ) : null}
               </div>
-              <div className="text-xs text-zinc-500">Priority: HR strap → watch fallback (5s). One device can serve both inputs.</div>
             </div>
           </div>
         </section>
@@ -457,7 +480,7 @@ export default function Home() {
           <div className="font-semibold text-zinc-300 mb-1">Debug · Raw BLE</div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-400">
             <span>FootPod: <span className={footpod.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{footpod.status}</span> {footpod.deviceName ? `(${footpod.deviceName})` : ""}</span>
-            <span>HR: <span className={heartrate.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{heartrate.status}</span> {heartrate.deviceName ? `(${heartrate.deviceName})` : ""}</span>
+            <span>HR: <span className={hrCardStatus === "connected" ? "text-emerald-400" : "text-amber-400"}>{hrCardStatus}</span> {hrCardName ? `(${hrCardName}${hrIsShared ? " via Foot Pod" : ""})` : ""}</span>
             <span>HR: {hr ?? "--"} bpm</span>
             <span>speedMs: {speedMs != null ? speedMs.toFixed(2) : "--"} ({smoothSpeed != null ? smoothSpeed.toFixed(2) : "--"} smooth)</span>
             <span>cad: {cadence ?? "--"} ({smoothCadence != null ? Math.round(smoothCadence) : "--"} smooth)</span>

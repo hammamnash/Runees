@@ -31,6 +31,13 @@ interface GattService {
 interface GattServer {
   getPrimaryService: (u: number) => Promise<GattService>;
 }
+interface BleDevice {
+  id?: string;
+  name?: string;
+  gatt: { connect: () => Promise<unknown>; connected: boolean; disconnect: () => void };
+  addEventListener: (e: string, cb: () => void) => void;
+  removeEventListener?: (e: string, cb: () => void) => void;
+}
 
 const LS_KEY = (slot: BleSlot) => `runees_ble_${slot}_id`;
 const LS_NAME = (slot: BleSlot) => `runees_ble_${slot}_name`;
@@ -38,6 +45,25 @@ const LS_NAME = (slot: BleSlot) => `runees_ble_${slot}_name`;
 function getBluetooth(): unknown {
   if (typeof navigator === "undefined") return null;
   return (navigator as unknown as { bluetooth?: unknown }).bluetooth ?? null;
+}
+
+// ── Shared connection registry: one physical device → one GATT link ──
+// When both slots pick the same watch, reuse the same server instead of
+// opening a second gatt.connect() which destabilizes Windows/Chrome BLE.
+type RegistryEntry = {
+  device: BleDevice;
+  server: GattServer;
+  refCount: number;
+  slots: Set<BleSlot>;
+  hrAttached: boolean;
+  rscAttached: boolean;
+  batteryTimer: number | null;
+  disconnectHandlers: Map<BleSlot, () => void>;
+};
+const registry = new Map<string, RegistryEntry>();
+
+function getRegistryKey(device: BleDevice): string | null {
+  return device.id ?? device.name ?? null;
 }
 
 export function useBleSource(
@@ -50,10 +76,13 @@ export function useBleSource(
   const [error, setError] = useState<string | null>(null);
   const [batteryPct, setBatteryPct] = useState<number | null>(null);
   const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
-  const deviceRef = useRef<unknown>(null);
+  const deviceRef = useRef<BleDevice | null>(null);
   const serverRef = useRef<GattServer | null>(null);
+  const registryKeyRef = useRef<string | null>(null);
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
   const autoReconnectTried = useRef(false);
+  const onMetricsRef = useRef(onMetrics);
+  useEffect(() => { onMetricsRef.current = onMetrics; }, [onMetrics]);
 
   useEffect(() => {
     setIsSupported(typeof navigator !== "undefined" && "bluetooth" in navigator);
@@ -98,33 +127,38 @@ export function useBleSource(
   }, []);
 
   const attachNotifications = useCallback(
-    async (server: GattServer) => {
-      // HR: for heartrate slot always, for footpod slot opportunistically (watch exposes both)
-      if (slot === "heartrate" || slot === "footpod") {
+    async (server: GattServer, entry: RegistryEntry | null) => {
+      const needHr = slot === "heartrate" || slot === "footpod";
+      const needRsc = slot === "footpod";
+      const hrAlready = !!entry?.hrAttached;
+      const rscAlready = !!entry?.rscAttached;
+
+      if (needHr) {
         try {
           const hrService = await server.getPrimaryService(0x180d);
           const hrChar = await hrService.getCharacteristic(0x2a37);
-          await hrChar.startNotifications();
+          if (!hrAlready) await hrChar.startNotifications();
           hrChar.addEventListener("characteristicvaluechanged", (ev: Event) => {
             const dv = (ev.target as unknown as { value: DataView }).value;
             if (!dv) return;
             const { hr } = parseHeartRate(dv);
-            onMetrics({ hr });
+            onMetricsRef.current({ hr });
           });
+          if (entry) entry.hrAttached = true;
         } catch (e) {
           if (slot === "heartrate") console.warn(`[${slot}] HR service not available`, e);
         }
       }
-      if (slot === "footpod") {
+      if (needRsc) {
         try {
           const rscService = await server.getPrimaryService(0x1814);
           const rscChar = await rscService.getCharacteristic(0x2a53);
-          await rscChar.startNotifications();
+          if (!rscAlready) await rscChar.startNotifications();
           rscChar.addEventListener("characteristicvaluechanged", (ev: Event) => {
             const dv = (ev.target as unknown as { value: DataView }).value;
             if (!dv) return;
             const r = parseRsc(dv);
-            onMetrics({
+            onMetricsRef.current({
               speedMs: r.speedMs,
               cadence: r.cadenceSpm * 2,
               strideM: r.strideM,
@@ -132,45 +166,124 @@ export function useBleSource(
               isRunning: r.isRunning,
             });
           });
+          if (entry) entry.rscAttached = true;
         } catch (e) {
           console.warn(`[${slot}] RSC service not available`, e);
-          setError("Connected but no Running Speed/Cadence. Enable Virtual Run on your Forerunner.");
+          setError("Connected but no Running Speed/Cadence. Enable Virtual Run on your watch.");
         }
       }
     },
-    [slot, onMetrics]
+    [slot]
   );
 
+  const handleDisconnect = useCallback(() => {
+    const key = registryKeyRef.current;
+    if (key) {
+      const entry = registry.get(key);
+      if (entry) {
+        entry.slots.delete(slot);
+        entry.disconnectHandlers.delete(slot);
+        entry.refCount = entry.slots.size;
+        if (entry.refCount === 0) {
+          if (entry.batteryTimer != null) window.clearInterval(entry.batteryTimer);
+          registry.delete(key);
+        }
+      }
+      registryKeyRef.current = null;
+    }
+    deviceRef.current = null;
+    serverRef.current = null;
+    setStatus("disconnected");
+    setBatteryPct(null);
+    setDeviceInfo(null);
+    setError("Device disconnected. Click Choose to reconnect.");
+  }, [slot]);
+
   const connectWithDevice = useCallback(
-    async (device: unknown) => {
-      const d = device as {
-        id?: string;
-        name?: string;
-        gatt: { connect: () => Promise<unknown>; connected: boolean; disconnect: () => void };
-        addEventListener: (e: string, cb: () => void) => void;
-      };
+    async (device: BleDevice) => {
+      const id = device.id ?? null;
+      const name = device.name || (slot === "footpod" ? "Foot Pod" : "HR Strap");
+      const key = getRegistryKey(device);
+
+      // ── Shared path: same physical device already connected via other slot ──
+      if (key && registry.has(key)) {
+        const entry = registry.get(key)!;
+        // Reuse existing GATT server; just attach missing characteristics for this slot
+        deviceRef.current = device;
+        serverRef.current = entry.server;
+        registryKeyRef.current = key;
+        entry.slots.add(slot);
+        entry.refCount = entry.slots.size;
+        setDeviceId(id);
+        setDeviceName(name);
+        try {
+          if (id) localStorage.setItem(LS_KEY(slot), id);
+          localStorage.setItem(LS_NAME(slot), name);
+        } catch {}
+        // Attach only what this slot needs and hasn't been attached yet
+        await attachNotifications(entry.server, entry);
+        // Register disconnect handler for this slot (shared device disconnects all slots)
+        const onDisc = () => {
+          // Notify all slots sharing this device
+          entry.disconnectHandlers.forEach((h) => h());
+          if (entry.batteryTimer != null) window.clearInterval(entry.batteryTimer);
+          registry.delete(key);
+        };
+        // Only add the physical listener once
+        if (entry.disconnectHandlers.size === 0) {
+          device.addEventListener("gattserverdisconnected", onDisc);
+        }
+        entry.disconnectHandlers.set(slot, handleDisconnect);
+        setStatus("connected");
+        setError(null);
+        return;
+      }
+
+      // ── New physical connection ──
       deviceRef.current = device;
-      const id = d.id ?? null;
-      const name = d.name || (slot === "footpod" ? "Foot Pod" : "HR Strap");
+      const dispName = name;
       setDeviceId(id);
-      setDeviceName(name);
+      setDeviceName(dispName);
       try {
         if (id) localStorage.setItem(LS_KEY(slot), id);
-        localStorage.setItem(LS_NAME(slot), name);
+        localStorage.setItem(LS_NAME(slot), dispName);
       } catch {}
-      d.addEventListener("gattserverdisconnected", () => {
-        setStatus("disconnected");
-        setError("Device disconnected. Click Choose to reconnect.");
-      });
-      const server = (await d.gatt.connect()) as GattServer;
+
+      const onDisc = handleDisconnect;
+      device.addEventListener("gattserverdisconnected", onDisc);
+
+      const server = (await device.gatt.connect()) as GattServer;
       serverRef.current = server;
-      await attachNotifications(server);
+
+      if (key) {
+        const entry: RegistryEntry = {
+          device,
+          server,
+          refCount: 1,
+          slots: new Set([slot]),
+          hrAttached: false,
+          rscAttached: false,
+          batteryTimer: null,
+          disconnectHandlers: new Map([[slot, handleDisconnect]]),
+        };
+        registry.set(key, entry);
+        registryKeyRef.current = key;
+        await attachNotifications(server, entry);
+        // Single battery poll per physical device
+        const timer = window.setInterval(() => readBattery(server), 60000);
+        entry.batteryTimer = timer;
+      } else {
+        // No stable key (no id/name) — fall back to direct attach without registry
+        registryKeyRef.current = null;
+        await attachNotifications(server, null);
+      }
+
       readBattery(server);
       readDeviceInfo(server);
       setStatus("connected");
       setError(null);
     },
-    [slot, attachNotifications, readBattery, readDeviceInfo]
+    [slot, attachNotifications, readBattery, readDeviceInfo, handleDisconnect]
   );
 
   const connect = useCallback(async () => {
@@ -188,10 +301,10 @@ export function useBleSource(
           ? [{ services: [0x1814] as unknown as string }]
           : [{ services: [0x180d] as unknown as string }];
       const optionalServices = slot === "footpod" ? [0x180d, 0x180f, 0x180a] : [0x1814, 0x180f, 0x180a];
-      const device = await bt.requestDevice({
+      const device = (await (bt as { requestDevice: (opts: unknown) => Promise<unknown> }).requestDevice({
         filters,
         optionalServices,
-      });
+      })) as BleDevice;
       await connectWithDevice(device);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -206,7 +319,7 @@ export function useBleSource(
       try {
         const bt = getBluetooth() as { getDevices?: () => Promise<unknown[]> } | null;
         if (!bt?.getDevices) return false;
-        const devices = (await bt.getDevices()) as { id: string }[];
+        const devices = (await bt.getDevices()) as BleDevice[];
         const found = devices.find((d) => d.id === id);
         if (!found) return false;
         setStatus("connecting");
@@ -220,14 +333,38 @@ export function useBleSource(
   );
 
   const disconnect = useCallback(async () => {
-    try {
-      const d = deviceRef.current as { gatt?: { connected: boolean; disconnect: () => void } } | null;
-      if (d?.gatt?.connected) d.gatt.disconnect();
-    } catch {}
+    const key = registryKeyRef.current;
+    if (key && registry.has(key)) {
+      const entry = registry.get(key)!;
+      entry.slots.delete(slot);
+      entry.disconnectHandlers.delete(slot);
+      entry.refCount = entry.slots.size;
+      if (entry.refCount === 0) {
+        // Last slot using this device — actually disconnect GATT
+        try {
+          if (deviceRef.current?.gatt?.connected) deviceRef.current.gatt.disconnect();
+        } catch {}
+        if (entry.batteryTimer != null) window.clearInterval(entry.batteryTimer);
+        registry.delete(key);
+      } else {
+        // Other slot still using device — just detach this slot, keep GATT alive
+        // Clear HR/RSC flags if no remaining slot needs them
+        const remaining = Array.from(entry.slots);
+        if (!remaining.includes("footpod")) entry.rscAttached = false;
+        if (!remaining.includes("heartrate") && !remaining.includes("footpod")) entry.hrAttached = false;
+      }
+      registryKeyRef.current = null;
+    } else {
+      try {
+        if (deviceRef.current?.gatt?.connected) deviceRef.current.gatt.disconnect();
+      } catch {}
+    }
+    deviceRef.current = null;
+    serverRef.current = null;
     setStatus("disconnected");
     setBatteryPct(null);
     setDeviceInfo(null);
-  }, []);
+  }, [slot]);
 
   const forget = useCallback(() => {
     try {
@@ -237,28 +374,41 @@ export function useBleSource(
     setDeviceId(null);
     setDeviceName(null);
     setError(null);
-    // also disconnect if connected
     disconnect();
   }, [slot, disconnect]);
 
-  // auto-reconnect on mount if we have a stored id and getDevices is available
+  // auto-reconnect on mount — staggered to avoid race when both slots share same device
   useEffect(() => {
     if (autoReconnectTried.current) return;
     autoReconnectTried.current = true;
     try {
       const stored = localStorage.getItem(LS_KEY(slot));
       if (!stored) return;
-      // delay slightly to let isSupported resolve
+      const delay = slot === "footpod" ? 800 : 1600;
       const t = window.setTimeout(() => {
-        connectById(stored).catch(() => {});
-      }, 800);
+        // If same device already connected via other slot's auto-reconnect, reuse it
+        const bt = getBluetooth() as { getDevices?: () => Promise<unknown[]> } | null;
+        if (!bt?.getDevices) return;
+        bt.getDevices().then((devices) => {
+          const found = (devices as BleDevice[]).find((d) => d.id === stored);
+          if (!found) return;
+          const key = getRegistryKey(found);
+          if (key && registry.has(key)) {
+            // Already connected via other slot — attach this slot to existing entry
+            connectWithDevice(found).catch(() => {});
+          } else {
+            connectById(stored).catch(() => {});
+          }
+        }).catch(() => {});
+      }, delay);
       return () => window.clearTimeout(t);
     } catch {}
-  }, [slot, connectById]);
+  }, [slot, connectById, connectWithDevice]);
 
-  // poll battery while connected
+  // battery poll only for non-registry devices (registry devices poll via entry timer)
   useEffect(() => {
     if (status !== "connected" || !serverRef.current) return;
+    if (registryKeyRef.current && registry.has(registryKeyRef.current)) return;
     const id = window.setInterval(() => {
       if (serverRef.current) readBattery(serverRef.current);
     }, 60000);
