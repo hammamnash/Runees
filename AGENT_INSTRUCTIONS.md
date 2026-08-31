@@ -1,4 +1,4 @@
-# Runees � AI Agent Build Instructions
+# Runees • AI Agent Build Instructions
 
 > **Source of truth for any AI agent implementing this repo.** Follow this file strictly. Do not deviate from stack/decisions without user approval.
 
@@ -8,7 +8,7 @@
 
 **Primary use case:** User runs on treadmill, watch broadcasts via Virtual Run, laptop shows large readable metrics.
 
-**Distribution:** Hybrid � **Web App (PWA) first**, then wrapped as **portable `.exe` via Tauri** (same web codebase). Must run on `localhost` without internet.
+**Distribution:** Hybrid • **Web App (PWA) first**, then wrapped as **portable `.exe` via Tauri** (same web codebase). Must run on `localhost` without internet.
 
 ---
 
@@ -16,42 +16,42 @@
 
 | Decision | Value |
 |---|---|
-| Garmin mode | **Virtual Run** (Settings > Sensors > Virtual Run) � broadcasts HR + RSC |
+| Garmin mode | **Virtual Run** (Settings > Sensors > Virtual Run) • broadcasts HR + RSC |
 | OS | **Windows 10/11 only** |
 | Pace unit | **min/km** primary, km/h secondary toggle |
-| Distance source | **Garmin RSC total distance** (`0x1814`) � no manual correction in MVP |
-| HR zones | **Garmin defaults** (220-age based, 5 zones) � configurable later |
+| Distance source | **Garmin RSC total distance** (`0x1814`) • no manual correction in MVP |
+| HR zones | **Garmin defaults** (220-age based, 5 zones) • configurable later |
 | FIT target | **Garmin Connect** only (Strava later) |
 | Offline | Nice-to-have, PWA must work on `localhost` without internet after first load |
 | Always-on-top | Not needed in MVP |
-| Hybrid | **Web App core + Tauri portable wrapper** � single codebase |
+| Hybrid | **Web App core + Tauri portable wrapper** • single codebase |
 
 ### 2.1 Can Web App run on localhost only?
 
-**Yes.** Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). `http://localhost` and `http://127.0.0.1` **are considered secure** � no HTTPS needed. `http://192.168.x.x` is **not** secure and will fail. For LAN access, use `https` or `localhost` tunnel. Tauri wrapper has no such restriction (native BLE).
+**Yes.** Web Bluetooth requires a [Secure Context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). `http://localhost` and `http://127.0.0.1` **are considered secure** • no HTTPS needed. `http://192.168.x.x` is **not** secure and will fail. For LAN access, use `https` or `localhost` tunnel. Tauri wrapper has no such restriction (native BLE).
 
 ---
 
 ## 3. Tech Stack (Mandatory)
 
 **Web App (MVP):**
-- Framework: **Next.js 14+ (App Router) + TypeScript** (or Vite + React + TS if simpler � prefer Next.js for PWA)
+- Framework: **Next.js 14+ (App Router) + TypeScript** (or Vite + React + TS if simpler • prefer Next.js for PWA)
 - Styling: **Tailwind CSS**
-- BLE: **Web Bluetooth API** (`navigator.bluetooth`) � Chrome/Edge only, document this
+- BLE: **Web Bluetooth API** (`navigator.bluetooth`) • Chrome/Edge only, document this
 - FIT encoding: **`fit-file-writer`** or manual FIT encoder (preferred: `fit-file-writer` npm)
-- PWA: **`next-pwa`** or `vite-plugin-pwa` � offline cache, installable
+- PWA: **`next-pwa`** or `vite-plugin-pwa` • offline cache, installable
 - State: React hooks / Zustand (lightweight)
 - Charts: `recharts` or `chart.js` for HR/pace history (phase 2)
 
 **Tauri Wrapper (Phase 2, same web build):**
-- **Tauri v2** � `src-tauri/` wraps `out/` or `build/`
-- BLE plugin: `tauri-plugin-ble` or custom Rust `btleplug` backend � fallback to Web Bluetooth inside WebView if plugin unavailable
+- **Tauri v2** • `src-tauri/` wraps `out/` or `build/`
+- BLE plugin: `tauri-plugin-ble` or custom Rust `btleplug` backend • fallback to Web Bluetooth inside WebView if plugin unavailable
 - Portable exe: `tauri build` with `portable: true` / single exe, no installer
 
 **Tooling:**
 - Node 22, npm
 - ESLint + Prettier
-- No Python backend � fully client-side
+- No Python backend • fully client-side
 
 ---
 
@@ -91,9 +91,9 @@ distance: uint32 LE, unit 1/10 m (if present) -> m = value / 10
 ```
 
 **Derived:**
-- Pace $min/km$: $pace = \frac{1000}{speed \times 60}$ if $speed > 0$ else `�`
+- Pace $min/km$: $pace = \frac{1000}{speed \times 60}$ if $speed > 0$ else `•`
 - Speed $km/h$: $speed \times 3.6$
-- Stride $m$: from RSC or `�`
+- Stride $m$: from RSC or `•`
 
 ### 4.3 Connection Flow
 
@@ -164,7 +164,7 @@ Generate a valid FIT Activity file that Garmin Connect accepts. Minimal messages
 ## 7. UI/UX Requirements
 
 - **Layout:** Single page, no auth. Header: title + Connect button + status dot. Main: 3 large cards (HR, Pace, Cadence) + Timer/Distance row + Controls + FIT download.
-- **Readability:** Dark theme, large fonts (HR/Pace > 48px), high contrast � readable at arm length on treadmill.
+- **Readability:** Dark theme, large fonts (HR/Pace > 48px), high contrast • readable at arm length on treadmill.
 - **Responsive:** Desktop first (laptop), but works on tablet.
 - **States:** Disconnected (prompt to connect), Connected idle (show live values, Start enabled), Recording (timer running, Pause/Stop), Paused, Stopped (show summary + Download FIT).
 - **Accessibility:** Keyboard operable, ARIA for live values (`aria-live="polite"`).
@@ -176,24 +176,24 @@ Generate a valid FIT Activity file that Garmin Connect accepts. Minimal messages
 ```
 /
 +-- app/ or src/           # Next.js app router
-�   +-- page.tsx           # Dashboard
-�   +-- layout.tsx
-�   +-- globals.css
-�   +-- components/
-�   �   +-- ConnectButton.tsx
-�   �   +-- MetricCard.tsx
-�   �   +-- SessionControls.tsx
-�   �   +-- FitDownloader.tsx
-�   +-- hooks/
-�   �   +-- useBluetooth.ts      # BLE connect/parse
-�   �   +-- useRecorder.ts       # session timer + records
-�   +-- lib/
-�       +-- bleParser.ts         # parse 0x2A37, 0x2A53
-�       +-- fitEncoder.ts        # FIT generation
-�       +-- hrZones.ts           # Garmin zones calc
+•   +-- page.tsx           # Dashboard
+•   +-- layout.tsx
+•   +-- globals.css
+•   +-- components/
+•   •   +-- ConnectButton.tsx
+•   •   +-- MetricCard.tsx
+•   •   +-- SessionControls.tsx
+•   •   +-- FitDownloader.tsx
+•   +-- hooks/
+•   •   +-- useBluetooth.ts      # BLE connect/parse
+•   •   +-- useRecorder.ts       # session timer + records
+•   +-- lib/
+•       +-- bleParser.ts         # parse 0x2A37, 0x2A53
+•       +-- fitEncoder.ts        # FIT generation
+•       +-- hrZones.ts           # Garmin zones calc
 +-- public/
-�   +-- manifest.json
-�   +-- icons/
+•   +-- manifest.json
+•   +-- icons/
 +-- src-tauri/             # Phase 2
 +-- package.json
 +-- AGENT_INSTRUCTIONS.md  # this file
@@ -203,7 +203,7 @@ Generate a valid FIT Activity file that Garmin Connect accepts. Minimal messages
 
 ## 9. Implementation Phases (For Agent)
 
-**Phase 1 � Web App MVP (Do First):**
+**Phase 1 • Web App MVP (Do First):**
 1. Scaffold Next.js + TS + Tailwind + PWA.
 2. Implement `bleParser.ts` with unit tests for HR/RSC parsing.
 3. Implement `useBluetooth.ts` (requestDevice, notifications, disconnect handling).
@@ -211,7 +211,7 @@ Generate a valid FIT Activity file that Garmin Connect accepts. Minimal messages
 5. Implement `useRecorder.ts` + `fitEncoder.ts` + download.
 6. Test with real Forerunner Virtual Run; validate FIT in Garmin Connect.
 
-**Phase 2 � Tauri Portable:**
+**Phase 2 • Tauri Portable:**
 1. `npm create tauri-app` wrapper, configure `tauri.conf.json` for portable single exe.
 2. Add BLE plugin or keep Web Bluetooth inside WebView (simpler).
 3. `npm run tauri build` -> `src-tauri/target/release/Runees.exe` portable.
