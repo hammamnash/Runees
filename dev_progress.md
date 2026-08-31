@@ -1,11 +1,11 @@
 # Runees - Development Progress
 
-> Last updated: 2026-08-31 11:45 WIB
+> Last updated: 2026-08-31 14:30 WIB
 > Branch: `main` | Previous worktree: `agents/hr-monitor-cadence-app-development` (merged via #2)
 
 ## Summary
 
-Phase 1 (Web App MVP) is **complete and verified**. Phase 2 is **complete (web features) + Tauri scaffolded**. The app runs on `http://localhost:3001` (3000 fallback), connects via Web Bluetooth to Garmin Virtual Run, displays HR/pace/cadence/distance/timer + live chart + 400m lap animation + auto-lap/km + HR alert, records at 1 Hz, exports FIT with auto-laps. Tauri wrapper scaffolded (`src-tauri/`, `npm run tauri:dev/build`); portable exe requires Rust toolchain (`cargo`). Build and lint are clean (120 kB / 207 kB). **2026-08-31 hotfixes applied:** RSC cadence strides→steps (×2 display, ÷2 FIT), recorder stale-closure fix, distance integration fallback, hydration-safe `isSupported`, battery + Device Info, stadium LapTrack, debug panel. **2026-08-31 session-box refactor:** distance/track/chart now session-only (0 until Start), top HR/Pace/Cadence stay live.
+Phase 1 (Web App MVP) is **complete and verified**. Phase 2 is **complete (web features) + Tauri scaffolded**. Phase 3 (Dual-Source BLE) is **complete**. The app runs on `http://localhost:3001` (3000 fallback), connects via Web Bluetooth to Garmin Virtual Run, displays HR/pace/cadence/distance/timer + live chart + 400m lap animation + auto-lap/km + HR alert, records at 1 Hz, exports FIT with auto-laps. Tauri wrapper scaffolded (`src-tauri/`, `npm run tauri:dev/build`); portable exe requires Rust toolchain (`cargo`). Build and lint are clean (120 kB / 207 kB). **2026-08-31 hotfixes applied:** RSC cadence strides→steps (×2 display, ÷2 FIT), recorder stale-closure fix, distance integration fallback, hydration-safe `isSupported`, battery + Device Info, stadium LapTrack, debug panel. **2026-08-31 session-box refactor:** distance/track/chart now session-only (0 until Start), top HR/Pace/Cadence stay live. **2026-08-31 Phase 3 dual-source:** Foot Pod + HR strap independent pickers, HR priority (strap→watch 5s), auto-reconnect, Sources panel.
 
 ---
 
@@ -254,6 +254,31 @@ Request: "distance and track is recorded even before users click start, should b
   - Top 3 cards (HR/Pace/Cadence) remain outside box, always live.
 - **Verified:** `npm run build` `120 kB / 207 kB` (was 118/205), lint 1 warning (stale `recorder` dep, harmless). Live DOM on `http://localhost:3001` shows Session header with `00:00:00 · idle · 0 samples` + Start, metrics `0.00 km`/`--:--`/`0`, placeholder chart, track 0%, debug `rawDist -- / sessionDist 0.0`.
 
+### 15. Phase 3 — Dual-Source BLE (Foot Pod + HR Strap) — Done 2026-08-31 14:30 WIB
+
+Request: treadmill run with chest strap for HR + Garmin watch for foot pod (pace/cadence/distance). Two input pickers (Foot Pod, Heart Rate), one device can serve both, auto-reconnect, HR priority strap→watch.
+
+- **`src/hooks/useBleSource.ts`** (new, 10 KB) — per-slot hook `useBleSource(slot, onMetrics)`:
+  - `BleSlot = "footpod" | "heartrate"`, `BleStatus`, `BleSourceMetrics`, `DeviceInfo`.
+  - `connect()` — `requestDevice` with slot-specific filter (`0x1814` for footpod, `0x180D` for heartrate), `optionalServices` includes the other service + battery/device info.
+  - `attachNotifications()` — footpod subscribes to RSC (`0x1814/0x2A53`) + opportunistic HR (`0x180D/0x2A37`); heartrate subscribes to HR only.
+  - `connectWithDevice()` — shared GATT connect + notification attach + battery/device info reads, stores `runees_ble_{slot}_id` + `runees_ble_{slot}_name` in localStorage.
+  - `connectById(id)` — auto-reconnect via `navigator.bluetooth.getDevices()` (permission-persisted devices).
+  - `disconnect()`, `forget()` (clears localStorage + disconnects), `readBattery()` (0x180F/0x2A19), `readDeviceInfo()` (0x180A).
+  - Auto-reconnect on mount (800ms delay, once per slot), battery poll every 60s while connected.
+  - `isSupported` hydration-safe (`useState<boolean|null>(null)` + mount effect).
+- **`src/app/page.tsx`** — dual-source wiring:
+  - Replaced `useBluetooth` + single `onMetrics` with `useBleSource("footpod", onFootpodMetrics)` + `useBleSource("heartrate", onHrMetrics)`.
+  - `onFootpodMetrics` — handles RSC (speed/cadence/stride/distance) + HR fallback (only if strap hasn't sent HR in 5s, tracked via `lastHrFromStrapRef`).
+  - `onHrMetrics` — HR strap is primary, updates `lastHrFromStrapRef` timestamp.
+  - Fallback interval (1s) — if strap disconnected and footpod has HR, promote footpod HR after 5s.
+  - Header simplified (removed single Connect Garmin, kept Mock toggle).
+  - New **Sources** panel (2 cards): Foot Pod (RSC) + Heart Rate, each with status dot, device name, battery, error, Choose/Disconnect/Forget buttons.
+  - Debug panel now shows `FootPod: status` + `HR: status` per slot.
+  - `cadDisplay` now checks `footpod.status` instead of `bt.status`.
+- **`src/hooks/useBluetooth.ts`** — kept as legacy (not removed, for reference).
+- **Verified:** `npm run build` 120 kB / 208 kB, `npm run lint` 1 warning (stale dep, harmless).
+
 ---
 
 ## Verification
@@ -268,8 +293,10 @@ Request: "distance and track is recorded even before users click start, should b
 | FIT | `buildFitFile` with auto-lap per km (multiple Lap messages), header + CRC, FileId/Activity/Session/Lap/Record; cadence now strides/min (halved from display steps/min); distance now session delta (0 until Start) |
 | Tauri | `src-tauri/` scaffolded, `tauri.conf.json` valid, requires `cargo` for exe build |
 | BLE live | HR + pace/cadence/distance/chart/track verified after hotfixes (cadence ×2, distance fallback, recorder ref fix) |
+| Dual-source | Foot Pod (RSC) + HR strap independent, HR priority strap→watch 5s, auto-reconnect via getDevices |
 | Hydration | `isSupported === false` check; no false "not supported" banner in VS Code Electron |
 | Session box | Distance/track/chart/avgPace only count after Start; top HR/Pace/Cadence stay live |
+| Sources panel | Foot Pod + HR strap pickers, one device can serve both, Forget + battery per slot |
 
 ---
 
@@ -285,7 +312,7 @@ Request: "distance and track is recorded even before users click start, should b
 
 ## Next Steps
 
-1. **Real device re-test** - Connect Forerunner Virtual Run, verify: top HR/Pace/Cadence live before Start; Session box stays 0/placeholder until Start; after Start distance increments, chart draws, track moves, laps appear; battery pill + debug `rawDist`/`sessionDist`; record 1-2 min, download FIT, import to Garmin Connect (check cadence halves, distance = session delta).
+1. **Real device re-test (dual-source)** - Connect Foot Pod (Garmin Virtual Run) + HR strap via Sources panel; verify: HR from strap, pace/cadence from watch; disconnect strap → HR falls back to watch after 5s; Forget + auto-reconnect on reload; record 1-2 min, download FIT, import to Garmin Connect.
 2. **Unit tests** - `bleParser` HR/RSC parsing with known byte sequences (including cadence strides vs steps).
 3. **Tauri exe build** - Install Rust, run `npm run tauri:build`, test portable exe on Windows.
 4. **Polish** - Calories, history, `.TCX`/`.GPX` export if needed.
@@ -308,7 +335,7 @@ On watch: **Menu > Sensors > Virtual Run** → start. In browser: **Connect Garm
 
 ## Git
 
-- Branch: `main` (hotfixes + session-box uncommitted on top of `dcd4318`)
+- Branch: `main` (Phase 3 dual-source uncommitted on top of `1c2250d`)
 - Previous worktree: `D:\Github Repo\Runees.worktrees\hr-monitor-cadence-app-development` (merged via #2)
-- Last commits: `dcd4318 fix unidentified char`, `6d13109 Merge PR #2`, `5f62857 Merge branch main`
-- Modified (uncommitted): `src/app/page.tsx`, `src/hooks/useBluetooth.ts`, `src/hooks/useRecorder.ts`, `src/lib/bleParser.ts`, `src/lib/fitEncoder.ts`, `src/components/LapTrack.tsx`, `public/sw.js`, `public/workbox-*.js`
+- Last commits: `1c2250d update layout`, `dcd4318 fix unidentified char`, `6d13109 Merge PR #2`
+- Modified (uncommitted): `src/app/page.tsx`, `src/hooks/useBleSource.ts` (new), `AGENT_INSTRUCTIONS.md`, `dev_progress.md`

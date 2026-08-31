@@ -4,7 +4,7 @@ import { MetricCard } from "@/components/MetricCard";
 import { LiveChart } from "@/components/LiveChart";
 import { LapTrack } from "@/components/LapTrack";
 import { HrAlertSettings, getStoredMaxHr } from "@/components/HrAlertSettings";
-import { useBluetooth } from "@/hooks/useBluetooth";
+import { useBleSource } from "@/hooks/useBleSource";
 import { useRecorder } from "@/hooks/useRecorder";
 import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
 import { getHrZone } from "@/lib/hrZones";
@@ -45,9 +45,18 @@ export default function Home() {
 
   const recorder = useRecorder();
 
-  const onMetrics = useCallback(
-    (m: Partial<{ hr: number | null; speedMs: number | null; cadence: number | null; cadenceSpm: number | null; strideM: number | null; distanceM: number | null }>) => {
-      if (m.hr !== undefined) setHr(m.hr);
+  // HR priority: strap (heartrate slot) wins; footpod HR is fallback after 5s without strap HR
+  const lastHrFromStrapRef = useRef<number>(0);
+  const lastHrFromFootpodRef = useRef<number | null>(null);
+
+  const onFootpodMetrics = useCallback(
+    (m: Partial<{ hr: number | null; speedMs: number | null; cadence: number | null; strideM: number | null; distanceM: number | null; isRunning: boolean | null }>) => {
+      // HR from footpod only if strap hasn't sent HR recently (5s fallback)
+      if (m.hr !== undefined && m.hr != null) {
+        lastHrFromFootpodRef.current = m.hr;
+        const strapFresh = Date.now() - lastHrFromStrapRef.current < 5000;
+        if (!strapFresh) setHr(m.hr);
+      }
       if (m.speedMs !== undefined) {
         setSpeedMs(m.speedMs);
         const nextSpeed = m.speedMs as number | null;
@@ -59,11 +68,8 @@ export default function Home() {
           return ema(prev, nextSpeed);
         });
       }
-      // Fix: useBluetooth sends `cadence`, not `cadenceSpm` — accept both
-      const cadVal = (m as { cadence?: number | null; cadenceSpm?: number | null }).cadence ?? (m as { cadenceSpm?: number | null }).cadenceSpm;
-      const hasCad = (m as { cadence?: unknown }).cadence !== undefined || (m as { cadenceSpm?: unknown }).cadenceSpm !== undefined;
-      if (hasCad) {
-        const nextCad = cadVal as number | null;
+      if (m.cadence !== undefined) {
+        const nextCad = m.cadence as number | null;
         setCadence(nextCad ?? null);
         if (nextCad != null && nextCad > 0) {
           lastNonZeroCadRef.current = { v: nextCad, t: Date.now() };
@@ -80,7 +86,6 @@ export default function Home() {
           lastRscTimeRef.current = Date.now();
           setDistanceM(m.distanceM);
         } else if (!hasGarminDistanceRef.current) {
-          // Fallback: Garmin didn't send total distance — integrate from speed
           const now = Date.now();
           const last = lastRscTimeRef.current;
           const dt = last ? (now - last) / 1000 : 1;
@@ -96,7 +101,29 @@ export default function Home() {
     []
   );
 
-  const bt = useBluetooth(onMetrics);
+  const onHrMetrics = useCallback(
+    (m: Partial<{ hr: number | null }>) => {
+      if (m.hr !== undefined && m.hr != null) {
+        lastHrFromStrapRef.current = Date.now();
+        setHr(m.hr);
+      }
+    },
+    []
+  );
+
+  const footpod = useBleSource("footpod", onFootpodMetrics);
+  const heartrate = useBleSource("heartrate", onHrMetrics);
+
+  // Fallback: if strap disconnects, periodically check if footpod HR should take over
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (heartrate.status !== "connected" && lastHrFromFootpodRef.current != null) {
+        const strapFresh = Date.now() - lastHrFromStrapRef.current < 5000;
+        if (!strapFresh) setHr(lastHrFromFootpodRef.current);
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [heartrate.status]);
 
   // push to recorder every second when recording
   const latestRef = useRef({ hr, cadence, speedMs, distanceM });
@@ -157,7 +184,7 @@ export default function Home() {
   const pace = paceSpeed != null && paceSpeed >= STATIONARY_SPEED_MS ? paceMinPerKm(paceSpeed) : isHoldingSpeed ? paceMinPerKm(holdSpeed!) : "--:--";
   const kmhVal = (isHoldingSpeed ? holdSpeed! : displaySpeed) ?? speedMs;
   const kmh = kmhVal != null && kmhVal >= STATIONARY_SPEED_MS ? speedKmh(kmhVal).toFixed(1) : isHoldingSpeed ? speedKmh(holdSpeed!).toFixed(1) : "0.0";
-  const cadDisplay = displayCad != null && displayCad > 0 ? String(Math.round(displayCad)) : isHoldingCad ? String(Math.round(holdCad!)) : bt.status === "connected" || mock ? "0" : "--";
+  const cadDisplay = displayCad != null && displayCad > 0 ? String(Math.round(displayCad)) : isHoldingCad ? String(Math.round(holdCad!)) : footpod.status === "connected" || mock ? "0" : "--";
   // Session distance: delta from distance at Start (0 when idle). Keeps raw distanceM for live HR/Pace/Cadence.
   const sessionDistanceM = recorder.state === "idle" ? 0 : Math.max(0, (distanceM ?? 0) - (distanceAtStartRef.current ?? 0));
   const distKm = (sessionDistanceM / 1000).toFixed(2);
@@ -200,37 +227,76 @@ export default function Home() {
             <span className="hidden sm:inline text-xs text-zinc-500">Treadmill Monitor</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${bt.status === "connected" ? "bg-emerald-500" : bt.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
-            <span className="text-xs text-zinc-400 hidden sm:inline">
-              {bt.status === "connected" ? bt.deviceName || "Connected" : bt.status === "connecting" ? "Connecting..." : "Disconnected"}
-            </span>
-            {bt.status !== "connected" ? (
-              <button
-                onClick={bt.connect}
-                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200"
-              >
-                Connect Garmin
-              </button>
-            ) : (
-              <button onClick={bt.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">
-                Disconnect
-              </button>
-            )}
-            <label className="ml-2 flex items-center gap-1 text-xs text-zinc-400">
+            <label className="flex items-center gap-1 text-xs text-zinc-400">
               <input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} className="accent-white" /> Mock
             </label>
           </div>
         </div>
-        {bt.error ? <div className="mx-auto max-w-6xl px-4 pb-2 text-xs text-amber-400">{bt.error}</div> : null}
-        {bt.isSupported === false ? (
-          <div className="mx-auto max-w-6xl px-4 pb-2 text-xs text-red-400">Web Bluetooth not supported. Use Chrome or Edge on Windows. For localhost, use http://localhost:3000</div>
-        ) : null}
       </header>
 
       <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
           On watch: <span className="text-zinc-200">Hold Menu &gt; Sensors &gt; Virtual Run</span> then start. Keep this tab in foreground. Pace/cadence require Virtual Run (not Broadcast HR).
         </div>
+
+        {/* Sources — dual BLE: Foot Pod (RSC) + Heart Rate (HR) */}
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
+          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+            <h2 className="text-sm font-bold tracking-widest text-white uppercase">Sources</h2>
+            <span className="text-xs text-zinc-500">Assign each input to a BLE device. One device can serve both.</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+            {/* Foot Pod */}
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                  <span className="text-sm font-semibold text-white">Foot Pod</span>
+                  <span className="text-xs text-zinc-500">RSC • pace/cadence/distance</span>
+                </div>
+                <span className="text-xs text-zinc-400">{footpod.status === "connected" ? footpod.deviceName || "Connected" : footpod.status === "connecting" ? "Connecting..." : "Not connected"}</span>
+              </div>
+              {footpod.deviceName ? <div className="text-xs text-zinc-500 truncate">{footpod.deviceName}{footpod.batteryPct != null ? ` • ${footpod.batteryPct}%` : ""}{footpod.deviceInfo?.model ? ` • ${footpod.deviceInfo.model}` : ""}</div> : null}
+              {footpod.error ? <div className="text-xs text-amber-400">{footpod.error}</div> : null}
+              {footpod.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
+              <div className="flex flex-wrap gap-2">
+                {footpod.status !== "connected" ? (
+                  <button onClick={footpod.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Choose Foot Pod</button>
+                ) : (
+                  <button onClick={footpod.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
+                )}
+                {(footpod.deviceId || footpod.deviceName) && footpod.status !== "connecting" ? (
+                  <button onClick={footpod.forget} className="rounded-full border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-900">Forget</button>
+                ) : null}
+              </div>
+            </div>
+            {/* Heart Rate */}
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${heartrate.status === "connected" ? "bg-emerald-500" : heartrate.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                  <span className="text-sm font-semibold text-white">Heart Rate</span>
+                  <span className="text-xs text-zinc-500">HR</span>
+                </div>
+                <span className="text-xs text-zinc-400">{heartrate.status === "connected" ? heartrate.deviceName || "Connected" : heartrate.status === "connecting" ? "Connecting..." : "Not connected"}</span>
+              </div>
+              {heartrate.deviceName ? <div className="text-xs text-zinc-500 truncate">{heartrate.deviceName}{heartrate.batteryPct != null ? ` • ${heartrate.batteryPct}%` : ""}{heartrate.deviceInfo?.model ? ` • ${heartrate.deviceInfo.model}` : ""}</div> : null}
+              {heartrate.error ? <div className="text-xs text-amber-400">{heartrate.error}</div> : null}
+              {heartrate.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
+              <div className="flex flex-wrap gap-2">
+                {heartrate.status !== "connected" ? (
+                  <button onClick={heartrate.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Choose HR Strap</button>
+                ) : (
+                  <button onClick={heartrate.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
+                )}
+                {(heartrate.deviceId || heartrate.deviceName) && heartrate.status !== "connecting" ? (
+                  <button onClick={heartrate.forget} className="rounded-full border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-900">Forget</button>
+                ) : null}
+              </div>
+              <div className="text-xs text-zinc-500">Priority: HR strap → watch fallback (5s). One device can serve both inputs.</div>
+            </div>
+          </div>
+        </section>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
@@ -390,7 +456,8 @@ export default function Home() {
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 font-mono text-xs">
           <div className="font-semibold text-zinc-300 mb-1">Debug · Raw BLE</div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-400">
-            <span>BT: <span className={bt.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{bt.status}</span> {bt.deviceName ? `(${bt.deviceName})` : ""}</span>
+            <span>FootPod: <span className={footpod.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{footpod.status}</span> {footpod.deviceName ? `(${footpod.deviceName})` : ""}</span>
+            <span>HR: <span className={heartrate.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{heartrate.status}</span> {heartrate.deviceName ? `(${heartrate.deviceName})` : ""}</span>
             <span>HR: {hr ?? "--"} bpm</span>
             <span>speedMs: {speedMs != null ? speedMs.toFixed(2) : "--"} ({smoothSpeed != null ? smoothSpeed.toFixed(2) : "--"} smooth)</span>
             <span>cad: {cadence ?? "--"} ({smoothCadence != null ? Math.round(smoothCadence) : "--"} smooth)</span>
@@ -399,8 +466,9 @@ export default function Home() {
             <span>records: {recorder.records.length}</span>
             <span>state: {recorder.state}</span>
           </div>
-          {bt.error ? <div className="mt-1 text-amber-400">{bt.error}</div> : null}
-          {bt.status === "connected" && (speedMs == null || cadence == null) ? <div className="mt-1 text-amber-400">RSC connected but no speed/cadence yet — start Virtual Run activity on watch and start moving (treadmill). If still 0, check watch is in Virtual Run, not Broadcast HR.</div> : null}
+          {footpod.error ? <div className="mt-1 text-amber-400">Foot Pod: {footpod.error}</div> : null}
+          {heartrate.error ? <div className="mt-1 text-amber-400">HR: {heartrate.error}</div> : null}
+          {footpod.status === "connected" && (speedMs == null || cadence == null) ? <div className="mt-1 text-amber-400">RSC connected but no speed/cadence yet — start Virtual Run activity on watch and start moving (treadmill). If still 0, check watch is in Virtual Run, not Broadcast HR.</div> : null}
         </div>
 
         <details className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4">

@@ -4,9 +4,9 @@
 
 ## 1. Project Overview
 
-**Runees** is a treadmill companion app for Windows laptops that connects via **Bluetooth Low Energy (BLE)** to a **Garmin Forerunner in Virtual Run mode** and displays live **Heart Rate (HR), Pace, Cadence, Stride, Distance** during a treadmill run. It can **record the session and export a Garmin-compatible `.FIT` file** for import into Garmin Connect.
+**Runees** is a treadmill companion app for Windows laptops that connects via **Bluetooth Low Energy (BLE)** to **two independent sources — Foot Pod (RSC: pace/cadence/distance) and Heart Rate (HR strap)** — and displays live **Heart Rate (HR), Pace, Cadence, Stride, Distance** during a treadmill run. It can **record the session and export a Garmin-compatible `.FIT` file** for import into Garmin Connect.
 
-**Primary use case:** User runs on treadmill, watch broadcasts via Virtual Run, laptop shows large readable metrics.
+**Primary use case:** User runs on treadmill, watch broadcasts via Virtual Run (foot pod) + optional chest strap for HR, laptop shows large readable metrics. One device can serve both inputs.
 
 **Distribution:** Hybrid • **Web App (PWA) first**, then wrapped as **portable `.exe` via Tauri** (same web codebase). Must run on `localhost` without internet.
 
@@ -25,6 +25,7 @@
 | Offline | Nice-to-have, PWA must work on `localhost` without internet after first load |
 | Always-on-top | Not needed in MVP |
 | Hybrid | **Web App core + Tauri portable wrapper** • single codebase |
+| BLE sources | **Dual-source: Foot Pod (RSC) + Heart Rate (HR)** • independent pickers, one device can serve both |
 
 ### 2.1 Can Web App run on localhost only?
 
@@ -95,22 +96,26 @@ distance: uint32 LE, unit 1/10 m (if present) -> m = value / 10
 - Speed $km/h$: $speed \times 3.6$
 - Stride $m$: from RSC or `•`
 
-### 4.3 Connection Flow
+### 4.3 Connection Flow (Dual-Source)
+
+Each slot (Foot Pod / Heart Rate) is an independent `useBleSource(slot)` instance with its own picker, GATT connection, and notifications. One physical device (e.g. Garmin watch) can be assigned to both slots.
 
 ```mermaid
 flowchart TD
-    A[User clicks Connect] --> B[navigator.bluetooth.requestDevice<br/>filters: services 0x180D, 0x1814<br/>optionalServices: 0x180F, 0x180A]
+    A[User clicks Choose Foot Pod / Choose HR Strap] --> B[navigator.bluetooth.requestDevice<br/>Foot Pod filter: 0x1814 / HR filter: 0x180D<br/>optionalServices: other + 0x180F, 0x180A]
     B --> C[gatt.connect]
-    C --> D[getPrimaryService 0x180D & 0x1814]
-    D --> E[getCharacteristic 0x2A37 & 0x2A53]
-    E --> F[startNotifications]
-    F --> G[oncharacteristicvaluechanged -> parse -> store]
+    C --> D[getPrimaryService + getCharacteristic]
+    D --> E[startNotifications]
+    E --> F[oncharacteristicvaluechanged -> parse -> store]
+    F --> G[HR priority: strap wins, watch fallback after 5s]
     G --> H[Update UI + Recorder if active]
 ```
 
-- Must be triggered by **user gesture** (button click).
-- Handle `gattserverdisconnected` -> show reconnect button, attempt auto-reconnect 3x.
+- Must be triggered by **user gesture** (button click) per slot.
+- Handle `gattserverdisconnected` -> show reconnect, auto-reconnect via `navigator.bluetooth.getDevices()` + stored device ID (localStorage `runees_ble_{slot}_id`).
 - Request `optionalServices` to avoid `NotFoundError` on some watches.
+- **HR priority:** HR strap (`heartrate` slot) is primary; foot pod HR is fallback if strap hasn't sent HR in 5s. RSC (pace/cadence/distance) always from foot pod slot.
+- **Persistence:** Device ID + name stored in localStorage per slot; auto-reconnect attempted on mount via `getDevices()`.
 
 ---
 
@@ -118,7 +123,7 @@ flowchart TD
 
 ### 5.1 MVP (Must Ship First)
 
-1.  **Scan & Connect:** Single "Connect Garmin" button, device picker, connection status (disconnected/connecting/connected), signal strength if available, disconnect button.
+1.  **Scan & Connect (Dual-Source):** Two independent pickers — **Foot Pod** (RSC: pace/cadence/distance) and **Heart Rate** (HR strap). Each has Choose/Disconnect/Forget, status dot, battery + device info. One device can serve both. Auto-reconnect via `getDevices()` + localStorage. HR priority: strap → watch fallback (5s).
 2.  **Live Dashboard (large, treadmill-readable):**
     *   HR: large $bpm$ + zone color (Z1 grey, Z2 blue, Z3 green, Z4 orange, Z5 red) + zone label
     *   Pace: $min/km$ large (e.g., `5:42 /km`) + $km/h$ small
@@ -132,13 +137,22 @@ flowchart TD
 6.  **PWA Offline:** Works on `http://localhost:3000` without internet after install. `manifest.json` + service worker caching static assets.
 7.  **Error Handling:** No BLE support -> banner "Use Chrome/Edge on Windows". No device found -> help text "Enable Virtual Run on watch".
 
-### 5.2 Phase 2 (Nice-to-Have, Do Not Block MVP)
+### 5.2 Phase 2 (Done)
 
-- HR zone config + audio alert if HR > threshold
-- Live chart (HR/pace/cadence over time)
-- Live lap animation (make 400m per lap)
-- Auto-lap per km
-- Tauri portable exe wrapper
+- HR zone config + audio alert if HR > threshold ✓
+- Live chart (HR/pace/cadence over time) ✓
+- Live lap animation (400m stadium) ✓
+- Auto-lap per km ✓
+- Tauri portable exe wrapper (scaffolded) ✓
+
+### 5.3 Phase 3 — Dual-Source BLE (Done 2026-08-31)
+
+- **Foot Pod + HR strap** independent pickers (`useBleSource` per slot)
+- One device can serve both inputs (watch exposes HR + RSC)
+- HR priority: strap wins, watch fallback after 5s
+- Auto-reconnect via `navigator.bluetooth.getDevices()` + localStorage (`runees_ble_{slot}_id`)
+- Per-slot battery + device info, Forget button
+- Sources panel UI (2 cards), per-source debug
 
 ---
 
@@ -185,7 +199,8 @@ Generate a valid FIT Activity file that Garmin Connect accepts. Minimal messages
 •   •   +-- SessionControls.tsx
 •   •   +-- FitDownloader.tsx
 •   +-- hooks/
-•   •   +-- useBluetooth.ts      # BLE connect/parse
+•   •   +-- useBleSource.ts      # Dual-source BLE (footpod/heartrate slots, auto-reconnect, HR priority)
+•   •   +-- useBluetooth.ts      # Legacy single-source (kept for reference)
 •   •   +-- useRecorder.ts       # session timer + records
 •   +-- lib/
 •       +-- bleParser.ts         # parse 0x2A37, 0x2A53
@@ -211,18 +226,23 @@ Generate a valid FIT Activity file that Garmin Connect accepts. Minimal messages
 5. Implement `useRecorder.ts` + `fitEncoder.ts` + download.
 6. Test with real Forerunner Virtual Run; validate FIT in Garmin Connect.
 
-**Phase 2 • Tauri Portable:**
-1. `npm create tauri-app` wrapper, configure `tauri.conf.json` for portable single exe.
-2. Add BLE plugin or keep Web Bluetooth inside WebView (simpler).
-3. `npm run tauri build` -> `src-tauri/target/release/Runees.exe` portable.
+**Phase 2 • Polish + Tauri Portable (Done):**
+1. HR alert + live chart + lap animation + auto-lap ✓
+2. `npm create tauri-app` wrapper, configure `tauri.conf.json` for portable single exe ✓
+3. `npm run tauri build` -> `src-tauri/target/release/Runees.exe` portable (requires Rust)
+
+**Phase 3 • Dual-Source BLE (Done 2026-08-31):**
+1. `useBleSource.ts` — per-slot hook with auto-reconnect + HR priority ✓
+2. Dashboard Sources panel — Foot Pod + HR strap pickers ✓
+3. Build + lint verification ✓
 
 ---
 
 ## 10. Acceptance Criteria
 
 - [ ] `npm run dev` on `http://localhost:3000` shows dashboard, no console errors.
-- [ ] "Connect Garmin" triggers browser picker, connects to Forerunner Virtual Run, shows live HR/cadence/pace within 2s.
-- [ ] Disconnect/reconnect handled gracefully.
+- [x] Sources panel: Foot Pod + HR strap pickers trigger browser picker, connect, show live HR/cadence/pace within 2s. One device can serve both.
+- [x] Disconnect/reconnect + auto-reconnect (getDevices + localStorage) handled gracefully. HR fallback strap→watch (5s).
 - [ ] Start/Pause/Stop timer works, distance increments from RSC.
 - [ ] Stop generates `.fit` that imports into Garmin Connect without error (shows activity with HR/pace/cadence graphs).
 - [ ] Works offline on localhost after first load (PWA cached).
