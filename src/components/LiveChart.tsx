@@ -16,7 +16,6 @@ export function LiveChart({ records }: { records: FitRecord[] }) {
     t: i,
     label: formatTime(i),
     hr: r.heartRate ?? null,
-    cad: r.cadence ?? null,
     pace: r.speedMs != null && r.speedMs >= 0.2 ? +(1000 / (r.speedMs * 60)).toFixed(2) : null,
   }));
   const paceFormatter = (v: number) => {
@@ -32,8 +31,15 @@ export function LiveChart({ records }: { records: FitRecord[] }) {
           <CartesianGrid stroke="#27272a" strokeDasharray="3 3" />
           <XAxis dataKey="label" tick={{ fill: "#71717a", fontSize: 10 }} interval="preserveStartEnd" minTickGap={30} />
           <YAxis yAxisId="hr" tick={{ fill: "#f87171", fontSize: 10 }} domain={[80, 200]} width={30} />
-          <YAxis yAxisId="cad" orientation="right" tick={{ fill: "#38bdf8", fontSize: 10 }} domain={[120, 200]} width={30} />
-          <YAxis yAxisId="pace" orientation="right" tick={{ fill: "#22c55e", fontSize: 10 }} domain={[3, 8]} width={38} tickFormatter={paceFormatter} />
+          <YAxis
+            yAxisId="pace"
+            orientation="right"
+            reversed
+            tick={{ fill: "#22c55e", fontSize: 10 }}
+            domain={[3, 8]}
+            width={38}
+            tickFormatter={paceFormatter}
+          />
           <Tooltip
             contentStyle={{ background: "#18181b", border: "1px solid #27272a", fontSize: 12 }}
             formatter={(value: unknown, name) => {
@@ -43,7 +49,6 @@ export function LiveChart({ records }: { records: FitRecord[] }) {
           />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           <Line yAxisId="hr" type="monotone" dataKey="hr" name="HR bpm" stroke="#ef4444" dot={false} strokeWidth={1.5} connectNulls />
-          <Line yAxisId="cad" type="monotone" dataKey="cad" name="Cad spm" stroke="#38bdf8" dot={false} strokeWidth={1.2} connectNulls />
           <Line yAxisId="pace" type="monotone" dataKey="pace" name="Pace min/km" stroke="#22c55e" dot={false} strokeWidth={1.2} connectNulls />
         </LineChart>
       </ResponsiveContainer>

@@ -485,7 +485,7 @@ export default function Home() {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 sm:p-5">
             <div className="lg:col-span-2 rounded-xl bg-black/40 border border-zinc-800 p-4">
-              <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Live Chart · HR / Cadence / km/h</div>
+              <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Live Chart · HR / Pace</div>
               {recorder.records.length === 0 ? (
                 <div className="flex h-[220px] items-center justify-center rounded-lg border border-dashed border-zinc-700 text-sm text-zinc-500">Start session to record — chart will appear here</div>
               ) : (
