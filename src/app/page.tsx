@@ -206,9 +206,24 @@ export default function Home() {
   const isHoldingSpeed = holdSpeed != null && (displaySpeed == null || displaySpeed < STATIONARY_SPEED_MS);
   const isHoldingCad = holdCad != null && (displayCad == null || displayCad === 0);
   const paceSpeed = isHoldingSpeed ? holdSpeed! : displaySpeed;
-  const pace = paceSpeed != null && paceSpeed >= STATIONARY_SPEED_MS ? paceMinPerKm(paceSpeed) : isHoldingSpeed ? paceMinPerKm(holdSpeed!) : "--:--";
+  const footpodConnected = footpod.status === "connected" || mock;
+  const pace =
+    paceSpeed != null && paceSpeed >= STATIONARY_SPEED_MS
+      ? paceMinPerKm(paceSpeed)
+      : isHoldingSpeed
+        ? paceMinPerKm(holdSpeed!)
+        : footpodConnected
+          ? "00:00"
+          : "--:--";
   const kmhVal = (isHoldingSpeed ? holdSpeed! : displaySpeed) ?? speedMs;
-  const kmh = kmhVal != null && kmhVal >= STATIONARY_SPEED_MS ? speedKmh(kmhVal).toFixed(1) : isHoldingSpeed ? speedKmh(holdSpeed!).toFixed(1) : "0.0";
+  const kmh =
+    kmhVal != null && kmhVal >= STATIONARY_SPEED_MS
+      ? speedKmh(kmhVal).toFixed(1)
+      : isHoldingSpeed
+        ? speedKmh(holdSpeed!).toFixed(1)
+        : footpodConnected
+          ? "0.0"
+          : "--";
   const cadDisplay = displayCad != null && displayCad > 0 ? String(Math.round(displayCad)) : isHoldingCad ? String(Math.round(holdCad!)) : footpod.status === "connected" || mock ? "0" : "--";
   // Session distance: delta from distance at Start (0 when idle). Keeps raw distanceM for live HR/Pace/Cadence.
   const sessionDistanceM = recorder.state === "idle" ? 0 : Math.max(0, (distanceM ?? 0) - (distanceAtStartRef.current ?? 0));
