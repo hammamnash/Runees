@@ -48,7 +48,7 @@ export function LiveChart({ records }: { records: FitRecord[] }) {
     return `${m}:${String(s).padStart(2, "0")}`;
   };
   return (
-    <div className="h-[260px] w-full">
+    <div className="h-[360px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
           <CartesianGrid stroke="#1c1c1c" strokeDasharray="3 3" />

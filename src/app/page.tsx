@@ -313,9 +313,9 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="mx-auto max-w-[1600px] space-y-16 px-6 pb-24 pt-8 lg:px-12">
+      <div className="mx-auto max-w-[1600px] space-y-10 px-6 pb-24 pt-8 lg:px-12">
         {/* Hero headline block — oversized typographic composition */}
-        <section className="grid grid-cols-1 gap-10 lg:grid-cols-2 lg:gap-16">
+        <section className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-16">
           <div>
             <p className="eyebrow mb-6">Live Telemetry</p>
             <h1 className="text-display text-5xl text-white md:text-7xl">
@@ -361,7 +361,7 @@ export default function Home() {
             </svg>
           </button>
           {settingsOpen ? (
-          <div className="grid grid-cols-1 gap-10 pt-8 lg:grid-cols-3 lg:gap-16">
+          <div className="grid grid-cols-1 gap-6 pt-8 lg:grid-cols-3 lg:gap-16">
         {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
         <section className="overflow-hidden lg:col-span-2">
           <div className="flex items-center justify-between gap-3 pb-6">
@@ -508,13 +508,13 @@ export default function Home() {
         </div>
         {/* Live Metrics — device time row + HR + pace + cadence */}
         <div className="glass-panel">
-          <p className="eyebrow mb-8">Live Metrics</p>
+          <p className="eyebrow mb-2">Live Metrics</p>
           {/* Compact device time strip */}
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-6">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-4">
             <span className="metric-num text-2xl text-white">{clockTime}</span>
             <span className="text-body-light text-xs text-ash">{clockDate} · {clockTz}</span>
           </div>
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-32 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
             label={`Heart Rate ${zone ? `• ${zone.label}` : ""}`}
             value={hr != null ? String(hr) : "--"}
@@ -529,7 +529,7 @@ export default function Home() {
                 {showKmh ? "Show min/km" : "Show km/h"}
               </button>
             </div>
-            <div className="metric-num text-6xl text-white lg:text-7xl">
+            <div className="metric-num text-6xl text-white lg:text-6xl">
               {showKmh ? (
                 <>
                   {kmh} <span className="text-2xl font-light text-ash">km/h</span>
@@ -549,7 +549,7 @@ export default function Home() {
         {/* Session Box — unified: header + metrics + chart/track. Distance/chart/track only count after Start */}
         <section className="glass-panel overflow-hidden">
           {/* Session header: Start at top */}
-          <div className="flex flex-wrap items-center justify-between gap-4 pb-8">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-4">
             <div className="flex flex-wrap items-center gap-4">
               <h2 className="text-display text-3xl text-white md:text-4xl">Session</h2>
               <span className={`h-2 w-2 rounded-full ${recorder.state === "recording" ? "bg-emerald-500 animate-pulse" : recorder.state === "paused" ? "bg-amber-500" : recorder.state === "stopped" ? "bg-zinc-500" : "bg-zinc-700"}`} />
@@ -587,7 +587,7 @@ export default function Home() {
           ) : null}
 
           {/* Session metrics — sessionDistanceM / avgPace / avgHr only meaningful after Start */}
-          <div className="grid grid-cols-2 gap-8 pb-10 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-8 pb-6 md:grid-cols-4">
             <div>
               <div className="eyebrow !text-ash mb-3">Time</div>
               <div className="metric-num text-4xl text-white">{formatTime(recorder.elapsedMs)}</div>
@@ -611,12 +611,12 @@ export default function Home() {
           </div>
 
           {recorder.state === "stopped" && recorder.records.length > 0 ? (
-            <div className="text-body-light mb-10 text-sm text-verdant">
+            <div className="text-body-light mb-6 text-sm text-verdant">
               Session saved in memory. Click <span className="text-white">Download .FIT</span> and import at <a className="text-saffron underline" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect Import</a>. Validate at fitfileviewer.com if needed.
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-10 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <div className="eyebrow !text-ash mb-4">Live Chart · HR / Pace</div>
               {recorder.records.length === 0 ? (
@@ -625,13 +625,13 @@ export default function Home() {
                 <LiveChart records={recorder.records} />
               )}
             </div>
-            <div className="space-y-10">
+            <div className="space-y-2">
               <LapTrack distanceM={sessionDistanceM} />
 
               {/* Auto-laps table — below track animation */}
               {recorder.getLaps().length > 0 ? (
                 <div>
-                  <div className="eyebrow !text-ash mb-4">Auto-laps · 1 km</div>
+                  <div className="eyebrow !text-ash mb-2">Auto-laps · 1 km</div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="text-xs uppercase tracking-nav text-ash">
