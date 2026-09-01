@@ -1,6 +1,7 @@
 ﻿﻿"use client";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { MetricCard } from "@/components/MetricCard";
+import { ClockCard } from "@/components/ClockCard";
 import { LiveChart } from "@/components/LiveChart";
 import { LapTrack } from "@/components/LapTrack";
 import { HrAlertSettings, getStoredMaxHr } from "@/components/HrAlertSettings";
@@ -32,6 +33,7 @@ export default function Home() {
   const [smoothSpeed, setSmoothSpeed] = useState<number | null>(null);
   const [smoothCadence, setSmoothCadence] = useState<number | null>(null);
   const [now, setNow] = useState(0);
+  const [devicesOpen, setDevicesOpen] = useState(true);
   const lastNonZeroSpeedRef = useRef<{ v: number; t: number } | null>(null);
   const lastNonZeroCadRef = useRef<{ v: number; t: number } | null>(null);
   const lastRscTimeRef = useRef<number | null>(null);
@@ -228,9 +230,12 @@ export default function Home() {
   // Session distance: delta from distance at Start (0 when idle). Keeps raw distanceM for live HR/Pace/Cadence.
   const sessionDistanceM = recorder.state === "idle" ? 0 : Math.max(0, (distanceM ?? 0) - (distanceAtStartRef.current ?? 0));
   const distKm = (sessionDistanceM / 1000).toFixed(2);
+  // Avg pace from the last pushed sample (1Hz): distance at sample time ÷ sample count (seconds).
+  // Derived from records instead of live elapsedMs so it updates uniformly with the other session metrics.
+  const lastRec = recorder.records[recorder.records.length - 1];
   const avgPace =
-    recorder.records.length && sessionDistanceM > 0
-      ? paceMinPerKm(sessionDistanceM / (recorder.elapsedMs / 1000 || 1))
+    lastRec?.distanceM != null && lastRec.distanceM > 0
+      ? paceMinPerKm(lastRec.distanceM / Math.max(1, recorder.records.length))
       : "--:--";
   const avgHr =
     recorder.records.length
@@ -281,13 +286,54 @@ export default function Home() {
 
         {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-            <h2 className="text-sm font-bold tracking-widest text-white uppercase">Devices</h2>
-            <button onClick={handleAddDevice} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">
-              Connect Device
+          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
+            <button
+              onClick={() => setDevicesOpen((v) => !v)}
+              className="flex items-center gap-3 text-left min-w-0"
+              aria-expanded={devicesOpen}
+            >
+              <h2 className="text-sm font-bold tracking-widest text-white uppercase">Devices</h2>
+              {!devicesOpen ? (
+                <span className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 min-w-0">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                    Foot Pod: {pool.assignments.footpod ? (pool.devices.find((d) => d.id === pool.assignments.footpod)?.name || pool.assignments.footpod) : "—"}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                    HR: {pool.assignments.heartrate ? (pool.devices.find((d) => d.id === pool.assignments.heartrate)?.name || pool.assignments.heartrate) : "—"}
+                  </span>
+                </span>
+              ) : null}
             </button>
+            <div className="flex items-center gap-3 shrink-0">
+              {devicesOpen ? (
+                <button
+                  onClick={handleAddDevice}
+                  className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200"
+                >
+                  Connect Device
+                </button>
+              ) : null}
+              <button
+                onClick={() => setDevicesOpen((v) => !v)}
+                aria-expanded={devicesOpen}
+                aria-label={devicesOpen ? "Collapse devices" : "Expand devices"}
+              >
+                <svg
+                  className={`h-4 w-4 text-zinc-500 transition-transform ${devicesOpen ? "rotate-180" : ""}`}
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
           </div>
 
+          {devicesOpen ? (
+            <>
           {/* Connected Devices pool */}
           <div className="p-4 space-y-2">
             {pool.devices.length === 0 ? (
@@ -371,8 +417,11 @@ export default function Home() {
               {heartrate.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
             </div>
           </div>
+            </>
+          ) : null}
         </section>
 
+        <ClockCard />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <MetricCard
             label={`Heart Rate ${zone ? `• ${zone.label}` : ""}`}
@@ -465,15 +514,6 @@ export default function Home() {
               <div className="text-xs text-zinc-500 uppercase tracking-widest">Avg HR {avgHrZone ? `• ${avgHrZone.label}` : ""}</div>
               <div className={`text-3xl font-bold tabular-nums ${avgHrZone?.color || "text-white"}`}>{avgHr != null ? avgHr : "--"} <span className="text-base font-normal text-zinc-400">bpm</span></div>
               <div className="text-xs text-zinc-500">{avgHrZone ? avgHrZone.label : recorder.records.length ? "No HR samples yet" : "—"}</div>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 gap-4 px-4 pb-4 sm:px-5 sm:pb-0 sm:pt-0">
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 flex items-center justify-between">
-              <div>
-                <div className="text-xs text-zinc-500 uppercase tracking-widest">Samples</div>
-                <div className="text-xs text-zinc-500">{recorder.state === "stopped" ? "Ready for Garmin Connect" : recorder.state === "idle" ? "Not recording" : "Recording…"}</div>
-              </div>
-              <div className="text-2xl font-bold tabular-nums text-white">{recorder.records.length}</div>
             </div>
           </div>
 
