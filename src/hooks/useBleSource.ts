@@ -12,6 +12,7 @@ import {
   type BleSlot,
 } from "@/lib/bleDevicePool";
 import type { BleSourceMetrics, DeviceInfo } from "@/lib/bleDevicePool";
+import { getBleSupportReason, BLE_SUPPORT_MESSAGES, type BleSupportReason } from "@/lib/bleSupport";
 
 export type BleStatus = "disconnected" | "connecting" | "connected";
 
@@ -39,11 +40,14 @@ export function useBleSource(
   const deviceInfo = device?.deviceInfo ?? null;
 
   const [isSupported, setIsSupported] = useState<boolean | null>(null);
+  const [supportReason, setSupportReason] = useState<BleSupportReason | null>(null);
   const onMetricsRef = useRef(onMetrics);
   useEffect(() => { onMetricsRef.current = onMetrics; }, [onMetrics]);
 
   useEffect(() => {
-    setIsSupported(typeof navigator !== "undefined" && "bluetooth" in navigator);
+    const reason = getBleSupportReason();
+    setSupportReason(reason);
+    setIsSupported(reason === "supported");
   }, []);
 
   useEffect(() => {
@@ -90,6 +94,8 @@ export function useBleSource(
     batteryPct,
     deviceInfo,
     isSupported,
+    supportReason,
+    supportMessage: supportReason ? BLE_SUPPORT_MESSAGES[supportReason] : null,
     connect,
     disconnect,
     forget,

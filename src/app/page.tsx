@@ -391,7 +391,7 @@ export default function Home() {
                 ))}
               </select>
               {footpod.error ? <div className="text-xs text-amber-400">{footpod.error}</div> : null}
-              {footpod.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
+              {footpod.supportMessage ? <div className="text-xs text-red-400">{footpod.supportMessage}</div> : null}
             </div>
 
             <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-2">
@@ -414,7 +414,7 @@ export default function Home() {
               </select>
               {hrIsShared ? <div className="text-xs text-zinc-500">Using watch HR. Assign a dedicated device for more accurate HR.</div> : null}
               {heartrate.error ? <div className="text-xs text-amber-400">{heartrate.error}</div> : null}
-              {heartrate.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
+              {heartrate.supportMessage ? <div className="text-xs text-red-400">{heartrate.supportMessage}</div> : null}
             </div>
           </div>
             </>
