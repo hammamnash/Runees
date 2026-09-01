@@ -1,14 +1,17 @@
 ﻿﻿"use client";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { MetricCard } from "@/components/MetricCard";
+import { HrZoneGauge } from "@/components/HrZoneGauge";
 import { ClockCard } from "@/components/ClockCard";
 import { LiveChart } from "@/components/LiveChart";
 import { LapTrack } from "@/components/LapTrack";
-import { HrAlertSettings, getStoredMaxHr } from "@/components/HrAlertSettings";
+import { HrAlertSettings } from "@/components/HrAlertSettings";
+import { ParticleField } from "@/components/ParticleField";
 import { useBleSource } from "@/hooks/useBleSource";
 import { useRecorder } from "@/hooks/useRecorder";
 import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
-import { getHrZone } from "@/lib/hrZones";
+import { getHrZone, HrZoneConfig } from "@/lib/hrZones";
+import { hrZoneStore } from "@/lib/hrZoneStore";
 import { downloadFit } from "@/lib/fitEncoder";
 import { ema, HOLD_MS, STATIONARY_SPEED_MS } from "@/lib/smoothing";
 import { assignSource, disconnectDevice, pickDevice, poolStore } from "@/lib/bleDevicePool";
@@ -34,6 +37,7 @@ export default function Home() {
   const [smoothCadence, setSmoothCadence] = useState<number | null>(null);
   const [now, setNow] = useState(0);
   const [devicesOpen, setDevicesOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(true);
   const lastNonZeroSpeedRef = useRef<{ v: number; t: number } | null>(null);
   const lastNonZeroCadRef = useRef<{ v: number; t: number } | null>(null);
   const lastRscTimeRef = useRef<number | null>(null);
@@ -197,9 +201,17 @@ export default function Home() {
     return () => window.clearInterval(id);
   }, [mock, recorder.state]);
 
-  const [maxHr, setMaxHrState] = useState(190);
-  useEffect(() => { setMaxHrState(getStoredMaxHr()); }, []);
-  const zone = getHrZone(hr ?? 0, maxHr);
+  const zoneSettings = useSyncExternalStore(
+    hrZoneStore.subscribe,
+    hrZoneStore.getSnapshot,
+    hrZoneStore.getServerSnapshot
+  );
+  const zoneCfg: HrZoneConfig = {
+    method: zoneSettings.method,
+    maxHr: zoneSettings.maxHr,
+    restingHr: zoneSettings.restingHr,
+  };
+  const zone = getHrZone(hr ?? 0, zoneSettings.maxHr, zoneCfg);
   const holdSpeed = lastNonZeroSpeedRef.current && now - lastNonZeroSpeedRef.current.t < HOLD_MS ? lastNonZeroSpeedRef.current.v : null;
   const holdCad = lastNonZeroCadRef.current && now - lastNonZeroCadRef.current.t < HOLD_MS ? lastNonZeroCadRef.current.v : null;
   const displaySpeed = smoothSpeed ?? speedMs;
@@ -244,7 +256,18 @@ export default function Home() {
             Math.max(1, recorder.records.filter((r) => r.heartRate).length)
         )
       : null;
-  const avgHrZone = avgHr != null ? getHrZone(avgHr, maxHr) : null;
+  const avgHrZone = avgHr != null ? getHrZone(avgHr, zoneSettings.maxHr, zoneCfg) : null;
+
+  // Device clock (derived from the 500ms `now` ticker)
+  const clockTime = now != 0 ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now) : "--:--:--";
+  const clockDate = now != 0 ? new Intl.DateTimeFormat(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" }).format(now) : "";
+  const clockTz = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time";
+    } catch {
+      return "Local time";
+    }
+  })();
 
   const handleStart = useCallback(() => {
     distanceAtStartRef.current = distanceM ?? 0;
@@ -263,54 +286,109 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-black text-white">
-      <header className="sticky top-0 z-10 border-b border-zinc-800 bg-black/80 backdrop-blur">
-        <div className="mx-auto max-w-6xl flex items-center justify-between px-4 py-3">
+    <main className="relative min-h-screen bg-void text-white">
+      <ParticleField />
+      <div className="relative z-10">
+      <header className="sticky top-0 z-20 bg-void/70 backdrop-blur-sm">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-6 py-5 lg:px-12">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-white text-black grid place-items-center font-black">R</div>
-            <span className="font-bold tracking-tight">Runees</span>
-            <span className="hidden sm:inline text-xs text-zinc-500">Treadmill Monitor</span>
+            {/* Triangular logo mark — Dala lockup */}
+            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+              <defs>
+                <linearGradient id="logoGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#8052ff" />
+                  <stop offset="100%" stopColor="#15846e" />
+                </linearGradient>
+              </defs>
+              <path d="M12 2 L22 20 L2 20 Z" fill="url(#logoGrad)" />
+            </svg>
+            <span className="text-display text-2xl text-white">Runees</span>
+            <span className="hidden sm:inline text-xs font-light text-ash">Indoor Run Monitor</span>
           </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1 text-xs text-zinc-400">
-              <input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} className="accent-white" /> Mock
+          <div className="flex items-center gap-6">
+            <label className="flex cursor-pointer items-center gap-2 text-xs uppercase tracking-nav text-ash transition-colors hover:text-white">
+              <input type="checkbox" checked={mock} onChange={(e) => setMock(e.target.checked)} className="accent-[#8052ff]" /> Mock
             </label>
           </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-6xl px-4 py-6 space-y-6">
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 text-xs text-zinc-400">
-          On watch: <span className="text-zinc-200">Hold Menu &gt; Sensors &gt; Virtual Run</span> then start. Keep this tab in foreground. Pace/cadence require Virtual Run (not Broadcast HR).
-        </div>
+      <div className="mx-auto max-w-[1600px] space-y-16 px-6 pb-24 pt-8 lg:px-12">
+        {/* Hero headline block — oversized typographic composition */}
+        <section className="grid grid-cols-1 gap-10 lg:grid-cols-2 lg:gap-16">
+          <div>
+            <p className="eyebrow mb-6">Live Telemetry</p>
+            <h1 className="text-display text-5xl text-white md:text-7xl">
+              Every stride,<br />measured.
+            </h1>
+          </div>
+          <div className="flex flex-col justify-end">
+            <p className="text-body-light max-w-md text-lg text-mist">
+              On watch: <span className="text-white">Hold Menu &gt; Sensors &gt; Virtual Run</span> then start. Keep this tab in the foreground — pace and cadence require Virtual Run, not Broadcast HR.
+            </p>
+          </div>
+        </section>
 
-        {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
-            <button
-              onClick={() => setDevicesOpen((v) => !v)}
-              className="flex items-center gap-3 text-left min-w-0"
-              aria-expanded={devicesOpen}
-            >
-              <h2 className="text-sm font-bold tracking-widest text-white uppercase">Devices</h2>
-              {!devicesOpen ? (
-                <span className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 min-w-0">
+        {/* Settings — device connection + HR zone configuration (collapsible) */}
+        <div className="glass-panel">
+          <button
+            onClick={() => setSettingsOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-3 text-left"
+            aria-expanded={settingsOpen}
+          >
+            <span className="flex min-w-0 items-center gap-4">
+              <span className="eyebrow">Settings</span>
+              {!settingsOpen ? (
+                <span className="flex min-w-0 flex-wrap items-center gap-4 text-xs text-ash">
                   <span className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                    <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
                     Foot Pod: {pool.assignments.footpod ? (pool.devices.find((d) => d.id === pool.assignments.footpod)?.name || pool.assignments.footpod) : "—"}
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
+                    <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
+                    HR: {pool.assignments.heartrate ? (pool.devices.find((d) => d.id === pool.assignments.heartrate)?.name || pool.assignments.heartrate) : "—"}
+                  </span>
+                </span>
+              ) : null}
+            </span>
+            <svg
+              className={`h-4 w-4 shrink-0 text-ash transition-transform ${settingsOpen ? "rotate-180" : ""}`}
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden
+            >
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {settingsOpen ? (
+          <div className="grid grid-cols-1 gap-10 pt-8 lg:grid-cols-3 lg:gap-16">
+        {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
+        <section className="overflow-hidden lg:col-span-2">
+          <div className="flex items-center justify-between gap-3 pb-6">
+            <button
+              onClick={() => setDevicesOpen((v) => !v)}
+              className="flex min-w-0 items-center gap-4 text-left"
+              aria-expanded={devicesOpen}
+            >
+              <h2 className="text-display text-3xl text-white md:text-4xl">Devices</h2>
+              {!devicesOpen ? (
+                <span className="flex min-w-0 flex-wrap items-center gap-4 text-xs text-ash">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
+                    Foot Pod: {pool.assignments.footpod ? (pool.devices.find((d) => d.id === pool.assignments.footpod)?.name || pool.assignments.footpod) : "—"}
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
                     HR: {pool.assignments.heartrate ? (pool.devices.find((d) => d.id === pool.assignments.heartrate)?.name || pool.assignments.heartrate) : "—"}
                   </span>
                 </span>
               ) : null}
             </button>
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex shrink-0 items-center gap-4">
               {devicesOpen ? (
                 <button
                   onClick={handleAddDevice}
-                  className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200"
+                  className="iris-pill !py-2.5 !px-5"
                 >
                   Connect Device
                 </button>
@@ -321,7 +399,7 @@ export default function Home() {
                 aria-label={devicesOpen ? "Collapse devices" : "Expand devices"}
               >
                 <svg
-                  className={`h-4 w-4 text-zinc-500 transition-transform ${devicesOpen ? "rotate-180" : ""}`}
+                  className={`h-4 w-4 text-ash transition-transform ${devicesOpen ? "rotate-180" : ""}`}
                   viewBox="0 0 20 20"
                   fill="currentColor"
                   aria-hidden
@@ -335,33 +413,33 @@ export default function Home() {
           {devicesOpen ? (
             <>
           {/* Connected Devices pool */}
-          <div className="p-4 space-y-2">
+          <div className="space-y-3 pb-8">
             {pool.devices.length === 0 ? (
-              <div className="text-xs text-zinc-500">No devices connected. Click <span className="text-zinc-300">Connect Device</span> to open the browser BLE picker.</div>
+              <div className="text-body-light text-sm text-ash">No devices connected. Click <span className="text-white">Connect Device</span> to open the browser BLE picker.</div>
             ) : (
               pool.devices.map((d) => {
                 const isFoot = pool.assignments.footpod === d.id;
                 const isHr = pool.assignments.heartrate === d.id;
                 return (
-                  <div key={d.id} className="rounded-xl bg-black/40 border border-zinc-800 p-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className={`h-2 w-2 rounded-full ${d.status === "connected" ? "bg-emerald-500" : d.status === "connecting" ? "bg-amber-500 animate-pulse" : d.status === "error" ? "bg-red-500" : "bg-zinc-600"}`} />
+                  <div key={d.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className={`h-2 w-2 rounded-full ${d.status === "connected" ? "bg-emerald-500" : d.status === "connecting" ? "bg-amber-500 animate-pulse" : d.status === "error" ? "bg-red-500" : "bg-zinc-700"}`} />
                       <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white truncate">{d.name || d.id}</div>
-                        <div className="text-xs text-zinc-500">
+                        <div className="text-sm font-medium text-white">{d.name || d.id}</div>
+                        <div className="text-xs text-ash">
                           {d.status === "connected" ? "Connected" : d.status === "connecting" ? "Connecting..." : d.status === "error" ? "Error" : "Disconnected"}
                           {d.batteryPct != null ? ` • ${d.batteryPct}%` : ""}
                           {d.deviceInfo?.model ? ` • ${d.deviceInfo.model}` : ""}
                         </div>
-                        {d.error ? <div className="text-xs text-amber-400">{d.error}</div> : null}
+                        {d.error ? <div className="text-xs text-saffron">{d.error}</div> : null}
                         {isFoot || isHr ? (
-                          <div className="text-xs text-zinc-400 mt-0.5">
+                          <div className="mt-0.5 text-xs text-iris">
                             → {[isFoot ? "Foot Pod" : null, isHr ? "Heart Rate" : null].filter(Boolean).join(" + ")}
                           </div>
                         ) : null}
                       </div>
                     </div>
-                    <button onClick={() => handleDisconnectDevice(d.id)} className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-900">
+                    <button onClick={() => handleDisconnectDevice(d.id)} className="ghost-btn text-xs">
                       Disconnect
                     </button>
                   </div>
@@ -371,49 +449,49 @@ export default function Home() {
           </div>
 
           {/* Per-source assignment dropdowns */}
-          <div className="border-t border-zinc-800 p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-2">
+          <div className="grid grid-cols-1 gap-8 pb-8 md:grid-cols-2">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
-                  <span className="text-sm font-semibold text-white">Foot Pod</span>
-                  <span className="text-xs text-zinc-500">RSC • pace/cadence/distance</span>
+                  <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
+                  <span className="label-caps text-white">Foot Pod</span>
+                  <span className="text-xs font-light text-ash">RSC • pace/cadence/distance</span>
                 </div>
               </div>
               <select
-                className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-white"
+                className="w-full cursor-pointer rounded-card bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:bg-white/10"
                 value={pool.assignments.footpod ?? ""}
                 onChange={(e) => handleAssignSource("footpod", e.target.value || null)}
               >
                 <option value="">— Unassigned —</option>
                 {pool.devices.map((d) => (
-                  <option key={d.id} value={d.id ?? ""}>{d.name || d.id}</option>
+                  <option key={d.id} value={d.id ?? ""} className="bg-black">{d.name || d.id}</option>
                 ))}
               </select>
-              {footpod.error ? <div className="text-xs text-amber-400">{footpod.error}</div> : null}
+              {footpod.error ? <div className="text-xs text-saffron">{footpod.error}</div> : null}
               {footpod.supportMessage ? <div className="text-xs text-red-400">{footpod.supportMessage}</div> : null}
             </div>
 
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-2">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
-                  <span className="text-sm font-semibold text-white">Heart Rate</span>
-                  <span className="text-xs text-zinc-500">HR</span>
+                  <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
+                  <span className="label-caps text-white">Heart Rate</span>
+                  <span className="text-xs font-light text-ash">HR</span>
                 </div>
               </div>
               <select
-                className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-white"
+                className="w-full cursor-pointer rounded-card bg-white/5 px-4 py-3 text-sm text-white outline-none transition focus:bg-white/10"
                 value={pool.assignments.heartrate ?? ""}
                 onChange={(e) => handleAssignSource("heartrate", e.target.value || null)}
               >
                 <option value="">— Unassigned —</option>
                 {pool.devices.map((d) => (
-                  <option key={d.id} value={d.id ?? ""}>{d.name || d.id}</option>
+                  <option key={d.id} value={d.id ?? ""} className="bg-black">{d.name || d.id}</option>
                 ))}
               </select>
-              {hrIsShared ? <div className="text-xs text-zinc-500">Using watch HR. Assign a dedicated device for more accurate HR.</div> : null}
-              {heartrate.error ? <div className="text-xs text-amber-400">{heartrate.error}</div> : null}
+              {hrIsShared ? <div className="text-xs font-light text-ash">Using watch HR. Assign a dedicated device for more accurate HR.</div> : null}
+              {heartrate.error ? <div className="text-xs text-saffron">{heartrate.error}</div> : null}
               {heartrate.supportMessage ? <div className="text-xs text-red-400">{heartrate.supportMessage}</div> : null}
             </div>
           </div>
@@ -421,158 +499,173 @@ export default function Home() {
           ) : null}
         </section>
 
-        <ClockCard />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* HR zone configuration lives in Settings */}
+          <div>
+            <HrAlertSettings hr={hr} />
+          </div>
+          </div>
+          ) : null}
+        </div>
+        {/* Live Metrics — device time row + HR + pace + cadence */}
+        <div className="glass-panel">
+          <p className="eyebrow mb-8">Live Metrics</p>
+          {/* Compact device time strip */}
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-6">
+            <span className="metric-num text-2xl text-white">{clockTime}</span>
+            <span className="text-body-light text-xs text-ash">{clockDate} · {clockTz}</span>
+          </div>
+          <div className="grid grid-cols-1 gap-8 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
             label={`Heart Rate ${zone ? `• ${zone.label}` : ""}`}
             value={hr != null ? String(hr) : "--"}
             unit="bpm"
-            sub={zone ? `${zone.label}` : "Connect to see HR"}
+            sub={hr != null ? <HrZoneGauge hr={hr} cfg={zoneCfg} /> : "Connect to see HR"}
             colorClass={zone?.color || "text-white"}
           />
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-6 flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs tracking-widest text-zinc-500 uppercase">Pace</span>
-              <button onClick={() => setShowKmh((v) => !v)} className="text-xs text-zinc-400 underline">
+              <span className="eyebrow !text-ash">Pace</span>
+              <button onClick={() => setShowKmh((v) => !v)} className="ghost-btn text-xs">
                 {showKmh ? "Show min/km" : "Show km/h"}
               </button>
             </div>
-            <div className="text-5xl font-black tabular-nums text-white">
+            <div className="metric-num text-6xl text-white lg:text-7xl">
               {showKmh ? (
                 <>
-                  {kmh} <span className="text-xl font-semibold text-zinc-400">km/h</span>
+                  {kmh} <span className="text-2xl font-light text-ash">km/h</span>
                 </>
               ) : (
                 <>
-                  {pace} <span className="text-xl font-semibold text-zinc-400">/km</span>
+                  {pace} <span className="text-2xl font-light text-ash">/km</span>
                 </>
               )}
             </div>
-            <div className="text-sm text-zinc-400">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`} • Stride {strideM != null ? strideM.toFixed(2) : "--"} m</div>
+            <div className="text-body-light text-sm text-ash">{showKmh ? `Pace ${pace} /km` : `${kmh} km/h`}</div>
           </div>
           <MetricCard label="Cadence" value={cadDisplay} unit="spm" sub={`${strideM != null ? `Stride ${strideM.toFixed(2)} m` : "Steps per minute"}${isHoldingCad ? " · Holding" : isStationary ? " · Stationary" : ""}`} />
+          </div>
         </div>
 
         {/* Session Box — unified: header + metrics + chart/track. Distance/chart/track only count after Start */}
-        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
+        <section className="glass-panel overflow-hidden">
           {/* Session header: Start at top */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-900 px-4 py-3 sm:px-5">
-            <div className="flex items-center gap-3">
-              <h2 className="text-sm font-bold tracking-widest text-white uppercase">Session</h2>
-              <span className={`h-2 w-2 rounded-full ${recorder.state === "recording" ? "bg-emerald-500 animate-pulse" : recorder.state === "paused" ? "bg-amber-500" : recorder.state === "stopped" ? "bg-zinc-500" : "bg-zinc-600"}`} />
-              <span className="text-xs font-mono tabular-nums text-zinc-400">{formatTime(recorder.elapsedMs)}</span>
-              <span className="hidden sm:inline text-xs capitalize text-zinc-500">· {recorder.state}</span>
-              <span className="text-xs text-zinc-500">{recorder.records.length} samples</span>
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-8">
+            <div className="flex flex-wrap items-center gap-4">
+              <h2 className="text-display text-3xl text-white md:text-4xl">Session</h2>
+              <span className={`h-2 w-2 rounded-full ${recorder.state === "recording" ? "bg-emerald-500 animate-pulse" : recorder.state === "paused" ? "bg-amber-500" : recorder.state === "stopped" ? "bg-zinc-500" : "bg-zinc-700"}`} />
+              <span className="metric-num text-lg text-mist">{formatTime(recorder.elapsedMs)}</span>
+              <span className="hidden text-xs capitalize text-ash sm:inline">· {recorder.state}</span>
+              <span className="text-xs font-light text-ash">{recorder.records.length} samples</span>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3">
               {recorder.state === "idle" && (
-                <button onClick={handleStart} className="rounded-full bg-emerald-600 px-6 py-2 text-sm font-semibold text-white hover:bg-emerald-500">Start</button>
+                <button onClick={handleStart} className="iris-pill">Start</button>
               )}
               {recorder.state === "recording" && (
                 <>
-                  <button onClick={recorder.pause} className="rounded-full bg-amber-600 px-5 py-2 text-sm font-semibold text-white hover:bg-amber-500">Pause</button>
-                  <button onClick={recorder.stop} className="rounded-full border border-zinc-700 bg-zinc-800 px-5 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700">Stop</button>
+                  <button onClick={recorder.pause} className="iris-pill">Pause</button>
+                  <button onClick={recorder.stop} className="ghost-pill">Stop</button>
                 </>
               )}
               {recorder.state === "paused" && (
                 <>
-                  <button onClick={recorder.resume} className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500">Resume</button>
-                  <button onClick={recorder.stop} className="rounded-full border border-zinc-700 bg-zinc-800 px-5 py-2 text-sm font-semibold text-zinc-200 hover:bg-zinc-700">Stop</button>
+                  <button onClick={recorder.resume} className="iris-pill">Resume</button>
+                  <button onClick={recorder.stop} className="ghost-pill">Stop</button>
                 </>
               )}
               {recorder.state === "stopped" && (
                 <>
-                  <button onClick={handleDownload} className="rounded-full bg-white px-5 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Download .FIT</button>
-                  <button onClick={handleReset} className="rounded-full border border-zinc-700 px-5 py-2 text-sm text-zinc-300 hover:bg-zinc-800">Reset</button>
+                  <button onClick={handleDownload} className="iris-pill">Download .FIT</button>
+                  <button onClick={handleReset} className="ghost-pill">Reset</button>
                 </>
               )}
             </div>
           </div>
 
           {recorder.state === "idle" ? (
-            <div className="px-4 py-3 text-xs text-zinc-500 sm:px-5">Press <span className="font-semibold text-zinc-300">Start</span> to begin recording. Distance, chart and track will stay at zero until then.</div>
+            <div className="text-body-light pb-8 text-sm text-ash">Press <span className="text-white">Start</span> to begin recording. Distance, chart and track will stay at zero until then.</div>
           ) : null}
 
           {/* Session metrics — sessionDistanceM / avgPace / avgHr only meaningful after Start */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 sm:p-5">
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
-              <div className="text-xs text-zinc-500 uppercase tracking-widest">Time</div>
-              <div className="text-3xl font-mono font-bold tabular-nums text-white">{formatTime(recorder.elapsedMs)}</div>
-              <div className="text-xs capitalize text-zinc-500">{recorder.state} · 1 Hz</div>
+          <div className="grid grid-cols-2 gap-8 pb-10 md:grid-cols-4">
+            <div>
+              <div className="eyebrow !text-ash mb-3">Time</div>
+              <div className="metric-num text-4xl text-white">{formatTime(recorder.elapsedMs)}</div>
+              <div className="mt-2 text-xs capitalize font-light text-ash">{recorder.state} · 1 Hz</div>
             </div>
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
-              <div className="text-xs text-zinc-500 uppercase tracking-widest">Distance</div>
-              <div className="text-3xl font-bold tabular-nums text-white">{distKm} <span className="text-base font-normal text-zinc-400">km</span></div>
-              <div className="text-xs text-zinc-500">Session total</div>
+            <div>
+              <div className="eyebrow !text-ash mb-3">Distance</div>
+              <div className="metric-num text-4xl text-white">{distKm} <span className="text-lg font-light text-ash">km</span></div>
+              <div className="mt-2 text-xs font-light text-ash">Session total</div>
             </div>
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
-              <div className="text-xs text-zinc-500 uppercase tracking-widest">Avg Pace</div>
-              <div className="text-3xl font-bold tabular-nums text-white">{avgPace} <span className="text-base font-normal text-zinc-400">/km</span></div>
-              <div className="text-xs text-zinc-500">{recorder.records.length ? `${(sessionDistanceM / 1000).toFixed(2)} km` : "—"}</div>
+            <div>
+              <div className="eyebrow !text-ash mb-3">Avg Pace</div>
+              <div className="metric-num text-4xl text-white">{avgPace} <span className="text-lg font-light text-ash">/km</span></div>
+              <div className="mt-2 text-xs font-light text-ash">{recorder.records.length ? `${(sessionDistanceM / 1000).toFixed(2)} km` : "—"}</div>
             </div>
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4">
-              <div className="text-xs text-zinc-500 uppercase tracking-widest">Avg HR {avgHrZone ? `• ${avgHrZone.label}` : ""}</div>
-              <div className={`text-3xl font-bold tabular-nums ${avgHrZone?.color || "text-white"}`}>{avgHr != null ? avgHr : "--"} <span className="text-base font-normal text-zinc-400">bpm</span></div>
-              <div className="text-xs text-zinc-500">{avgHrZone ? avgHrZone.label : recorder.records.length ? "No HR samples yet" : "—"}</div>
+            <div>
+              <div className="eyebrow !text-ash mb-3">Avg HR {avgHrZone ? `• ${avgHrZone.label}` : ""}</div>
+              <div className={`metric-num text-4xl ${avgHrZone?.color || "text-white"}`}>{avgHr != null ? avgHr : "--"} <span className="text-lg font-light text-ash">bpm</span></div>
+              <div className="mt-2 text-xs font-light text-ash">{avgHrZone ? avgHrZone.label : recorder.records.length ? "No HR samples yet" : "—"}</div>
             </div>
           </div>
 
           {recorder.state === "stopped" && recorder.records.length > 0 ? (
-            <div className="mx-4 mt-4 rounded-xl border border-emerald-900 bg-emerald-950/30 p-3 text-sm text-emerald-200 sm:mx-5">
-              Session saved in memory. Click <span className="font-semibold">Download .FIT</span> and import at <a className="underline" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect Import</a>. Validate at fitfileviewer.com if needed.
+            <div className="text-body-light mb-10 text-sm text-verdant">
+              Session saved in memory. Click <span className="text-white">Download .FIT</span> and import at <a className="text-saffron underline" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect Import</a>. Validate at fitfileviewer.com if needed.
             </div>
           ) : null}
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 sm:p-5">
-            <div className="lg:col-span-2 rounded-xl bg-black/40 border border-zinc-800 p-4">
-              <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Live Chart · HR / Pace</div>
+          <div className="grid grid-cols-1 gap-10 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <div className="eyebrow !text-ash mb-4">Live Chart · HR / Pace</div>
               {recorder.records.length === 0 ? (
-                <div className="flex h-[220px] items-center justify-center rounded-lg border border-dashed border-zinc-700 text-sm text-zinc-500">Start session to record — chart will appear here</div>
+                <div className="flex h-[260px] items-center justify-center text-sm font-light text-ash">Start session to record — chart will appear here</div>
               ) : (
                 <LiveChart records={recorder.records} />
               )}
             </div>
-            <div className="space-y-4">
+            <div className="space-y-10">
               <LapTrack distanceM={sessionDistanceM} />
-              <HrAlertSettings hr={hr} />
+
+              {/* Auto-laps table — below track animation */}
+              {recorder.getLaps().length > 0 ? (
+                <div>
+                  <div className="eyebrow !text-ash mb-4">Auto-laps · 1 km</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-xs uppercase tracking-nav text-ash">
+                        <tr><th className="py-2 text-left">Lap</th><th className="text-right">Dist</th><th className="text-right">Time</th><th className="text-right">Pace</th><th className="text-right">Avg HR</th></tr>
+                      </thead>
+                      <tbody>
+                        {recorder.getLaps().map((lap) => {
+                          const secs = (lap.endTime.getTime() - lap.startTime.getTime()) / 1000;
+                          const pace = secs > 0 && lap.distanceM > 0 ? paceMinPerKm(lap.distanceM / secs) : "--:--";
+                          const avgHr = lap.records.filter((r) => r.heartRate).length ? Math.round(lap.records.filter((r) => r.heartRate).reduce((a, b) => a + (b.heartRate ?? 0), 0) / Math.max(1, lap.records.filter((r) => r.heartRate).length)) : "--";
+                          return (
+                            <tr key={lap.index} className="border-t border-white/10">
+                              <td className="py-2.5 text-white">{lap.index + 1}</td>
+                              <td className="py-2.5 text-right text-mist">{(lap.distanceM / 1000).toFixed(2)} km</td>
+                              <td className="py-2.5 text-right text-mist">{formatTime(lap.endTime.getTime() - lap.startTime.getTime())}</td>
+                              <td className="py-2.5 text-right text-mist">{pace} /km</td>
+                              <td className="py-2.5 text-right text-mist">{avgHr}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
 
-        {recorder.getLaps().length > 0 ? (
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4">
-            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-2">Auto-laps · 1 km</div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs text-zinc-500">
-                  <tr><th className="text-left py-1">Lap</th><th className="text-right">Dist</th><th className="text-right">Time</th><th className="text-right">Pace</th><th className="text-right">Avg HR</th></tr>
-                </thead>
-                <tbody>
-                  {recorder.getLaps().map((lap) => {
-                    const secs = (lap.endTime.getTime() - lap.startTime.getTime()) / 1000;
-                    const pace = secs > 0 && lap.distanceM > 0 ? paceMinPerKm(lap.distanceM / secs) : "--:--";
-                    const avgHr = lap.records.filter((r) => r.heartRate).length ? Math.round(lap.records.filter((r) => r.heartRate).reduce((a, b) => a + (b.heartRate ?? 0), 0) / Math.max(1, lap.records.filter((r) => r.heartRate).length)) : "--";
-                    return (
-                      <tr key={lap.index} className="border-t border-zinc-800">
-                        <td className="py-1">{lap.index + 1}</td>
-                        <td className="text-right">{(lap.distanceM / 1000).toFixed(2)} km</td>
-                        <td className="text-right">{formatTime(lap.endTime.getTime() - lap.startTime.getTime())}</td>
-                        <td className="text-right">{pace} /km</td>
-                        <td className="text-right">{avgHr}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 font-mono text-xs">
-          <div className="font-semibold text-zinc-300 mb-1">Debug · Raw BLE</div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-400">
-            <span>FootPod: <span className={footpod.status === "connected" ? "text-emerald-400" : "text-amber-400"}>{footpod.status}</span> {footpod.deviceName ? `(${footpod.deviceName})` : ""}</span>
-            <span>HR: <span className={hrCardStatus === "connected" ? "text-emerald-400" : "text-amber-400"}>{hrCardStatus}</span> {hrCardName ? `(${hrCardName}${hrIsShared ? " via Foot Pod" : ""})` : ""}</span>
+        <div className="glass-panel font-mono text-xs text-ash">
+          <div className="eyebrow !text-ash mb-2">Debug · Raw BLE</div>
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            <span>FootPod: <span className={footpod.status === "connected" ? "text-emerald-400" : "text-saffron"}>{footpod.status}</span> {footpod.deviceName ? `(${footpod.deviceName})` : ""}</span>
+            <span>HR: <span className={hrCardStatus === "connected" ? "text-emerald-400" : "text-saffron"}>{hrCardStatus}</span> {hrCardName ? `(${hrCardName}${hrIsShared ? " via Foot Pod" : ""})` : ""}</span>
             <span>HR: {hr ?? "--"} bpm</span>
             <span>speedMs: {speedMs != null ? speedMs.toFixed(2) : "--"} ({smoothSpeed != null ? smoothSpeed.toFixed(2) : "--"} smooth)</span>
             <span>cad: {cadence ?? "--"} ({smoothCadence != null ? Math.round(smoothCadence) : "--"} smooth)</span>
@@ -581,22 +674,23 @@ export default function Home() {
             <span>records: {recorder.records.length}</span>
             <span>state: {recorder.state}</span>
           </div>
-          {footpod.error ? <div className="mt-1 text-amber-400">Foot Pod: {footpod.error}</div> : null}
-          {heartrate.error ? <div className="mt-1 text-amber-400">HR: {heartrate.error}</div> : null}
-          {footpod.status === "connected" && (speedMs == null || cadence == null) ? <div className="mt-1 text-amber-400">RSC connected but no speed/cadence yet — start Virtual Run activity on watch and start moving (treadmill). If still 0, check watch is in Virtual Run, not Broadcast HR.</div> : null}
+          {footpod.error ? <div className="mt-1 text-saffron">Foot Pod: {footpod.error}</div> : null}
+          {heartrate.error ? <div className="mt-1 text-saffron">HR: {heartrate.error}</div> : null}
+          {footpod.status === "connected" && (speedMs == null || cadence == null) ? <div className="mt-1 text-saffron">RSC connected but no speed/cadence yet — start Virtual Run activity on watch and start moving (treadmill). If still 0, check watch is in Virtual Run, not Broadcast HR.</div> : null}
         </div>
 
-        <details className="rounded-xl border border-zinc-800 bg-zinc-900/30 p-4">
-          <summary className="cursor-pointer text-sm font-semibold">Help & Troubleshooting</summary>
-          <ul className="mt-2 list-disc pl-5 text-sm text-zinc-400 space-y-1">
+        <details className="glass-panel group">
+          <summary className="ghost-btn cursor-pointer text-sm">Help & Troubleshooting</summary>
+          <ul className="text-body-light mt-4 list-disc space-y-2 pl-5 text-sm text-mist">
             <li>Use Chrome or Edge. Firefox/Safari do not support Web Bluetooth.</li>
-            <li>Open via <code className="text-zinc-200">http://localhost:3000</code> • secure context required. <code>http://192.168.x.x</code> will fail.</li>
+            <li>Open via <code className="text-white">http://localhost:3000</code> • secure context required. <code>http://192.168.x.x</code> will fail.</li>
             <li>On Forerunner: Virtual Run broadcasts HR + pace/cadence. Broadcast HR alone gives only HR.</li>
             <li>If no RSC: check watch is in Virtual Run, not just Broadcast HR.</li>
             <li>Keep tab foreground; background tabs may throttle BLE.</li>
             <li>Mock toggle simulates data for UI testing without watch.</li>
           </ul>
         </details>
+      </div>
       </div>
     </main>
   );

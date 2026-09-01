@@ -1,32 +1,32 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { hrZoneStore } from "@/lib/hrZoneStore";
+import { getAllZones, getZoneRange, HrZoneConfig } from "@/lib/hrZones";
 
+// Keep the previous exported helper API for backward compatibility with callers
+// that read the stored max HR directly (imported from this module).
 const LS_MAX = "runees_maxHr";
 const LS_ALERT = "runees_hrAlert";
 const LS_ENABLED = "runees_hrAlertEnabled";
 
 export function HrAlertSettings({ hr }: { hr: number | null }) {
-  const [maxHr, setMaxHr] = useState(190);
-  const [threshold, setThreshold] = useState(175);
-  const [enabled, setEnabled] = useState(false);
+  const settings = useSyncExternalStore(
+    hrZoneStore.subscribe,
+    hrZoneStore.getSnapshot,
+    hrZoneStore.getServerSnapshot
+  );
   const lastAlertRef = useRef(0);
 
-  useEffect(() => {
-    const m = localStorage.getItem(LS_MAX);
-    const t = localStorage.getItem(LS_ALERT);
-    const e = localStorage.getItem(LS_ENABLED);
-    if (m) setMaxHr(parseInt(m, 10));
-    if (t) setThreshold(parseInt(t, 10));
-    if (e) setEnabled(e === "1");
-  }, []);
+  const cfg: HrZoneConfig = {
+    method: settings.method,
+    maxHr: settings.maxHr,
+    restingHr: settings.restingHr,
+  };
 
-  useEffect(() => { localStorage.setItem(LS_MAX, String(maxHr)); }, [maxHr]);
-  useEffect(() => { localStorage.setItem(LS_ALERT, String(threshold)); }, [threshold]);
-  useEffect(() => { localStorage.setItem(LS_ENABLED, enabled ? "1" : "0"); }, [enabled]);
-
+  // Alert audio/vibration
   useEffect(() => {
-    if (!enabled || hr == null) return;
-    if (hr >= threshold && Date.now() - lastAlertRef.current > 10000) {
+    if (!settings.alertEnabled || hr == null) return;
+    if (hr >= settings.alertThreshold && Date.now() - lastAlertRef.current > 10000) {
       lastAlertRef.current = Date.now();
       try {
         const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
@@ -43,28 +43,129 @@ export function HrAlertSettings({ hr }: { hr: number | null }) {
       } catch {}
       if ("vibrate" in navigator) navigator.vibrate(200);
     }
-  }, [hr, threshold, enabled]);
+  }, [hr, settings.alertThreshold, settings.alertEnabled]);
 
-  const isOver = enabled && hr != null && hr >= threshold;
+  const isOver = settings.alertEnabled && hr != null && hr >= settings.alertThreshold;
+
+  const zones = getAllZones(cfg);
+  const currentZone = hr != null && hr > 0 ? zones.findIndex((z) => {
+    const r = getZoneRange(z, cfg);
+    return hr >= r.low && hr < r.high;
+  }) : -1;
+
+  const setMax = (v: string) => hrZoneStore.setMaxHr(parseInt(v, 10) || 190);
+  const setRest = (v: string) => hrZoneStore.setRestingHr(parseInt(v, 10) || 76);
 
   return (
-    <div className={`rounded-2xl border p-4 ${isOver ? "bg-red-950/40 border-red-800" : "bg-zinc-900 border-zinc-800"}`}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs uppercase tracking-widest text-zinc-500">HR Alert</span>
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-white" />
-          Enable
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <span className="eyebrow !text-ash">HR Zones</span>
+        <label className="flex cursor-pointer items-center gap-2 text-xs text-ash transition-colors hover:text-white">
+          <input type="checkbox" checked={settings.alertEnabled} onChange={(e) => hrZoneStore.setAlertEnabled(e.target.checked)} className="accent-[#8052ff]" />
+          Alert
         </label>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="text-xs text-zinc-400">Max HR
-          <input type="number" value={maxHr} onChange={(e) => setMaxHr(parseInt(e.target.value, 10) || 190)} className="mt-1 w-full rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-white" min={120} max={220} />
-        </label>
-        <label className="text-xs text-zinc-400">Alert ≥ bpm
-          <input type="number" value={threshold} onChange={(e) => setThreshold(parseInt(e.target.value, 10) || 175)} className="mt-1 w-full rounded bg-zinc-800 border border-zinc-700 px-2 py-1 text-white" min={100} max={220} />
-        </label>
+
+      {/* Method toggle */}
+      <div className="mb-4 grid grid-cols-2 gap-1 rounded-card bg-white/5 p-1">
+        {(
+          [
+            { key: "max", label: "HRMax" },
+            { key: "hrr", label: "HRR (Karvonen)" },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.key}
+            onClick={() => hrZoneStore.setMethod(m.key)}
+            className={`rounded-pill px-2 py-1.5 text-xs font-medium transition ${
+              settings.method === m.key ? "bg-iris text-white" : "text-ash hover:text-white"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
       </div>
-      {isOver ? <div className="mt-2 text-xs font-semibold text-red-400">⚠ HR {hr} ≥ {threshold} bpm</div> : null}
+
+      {/* Inputs */}
+      <div className="grid grid-cols-2 gap-4">
+        <label className="text-xs font-light text-ash">Max HR
+          <input
+            type="number"
+            value={settings.maxHr}
+            onChange={(e) => setMax(e.target.value)}
+            className="mt-1 w-full rounded-card bg-white/5 px-3 py-2 text-white outline-none transition focus:bg-white/10"
+            min={120}
+            max={220}
+          />
+          <span className="mt-0.5 block text-[10px] text-zinc-600">Tip: 220 − age</span>
+        </label>
+        {settings.method === "hrr" ? (
+          <label className="text-xs font-light text-ash">Resting HR
+            <input
+              type="number"
+              value={settings.restingHr}
+              onChange={(e) => setRest(e.target.value)}
+              className="mt-1 w-full rounded-card bg-white/5 px-3 py-2 text-white outline-none transition focus:bg-white/10"
+              min={35}
+              max={120}
+            />
+            <span className="mt-0.5 block text-[10px] text-zinc-600">Waking, seated</span>
+          </label>
+        ) : (
+          <label className="text-xs font-light text-ash">Alert ≥ bpm
+            <input
+              type="number"
+              value={settings.alertThreshold}
+              onChange={(e) => hrZoneStore.setAlertThreshold(parseInt(e.target.value, 10) || 175)}
+              className="mt-1 w-full rounded-card bg-white/5 px-3 py-2 text-white outline-none transition focus:bg-white/10"
+              min={100}
+              max={220}
+            />
+          </label>
+        )}
+      </div>
+
+      {settings.method === "hrr" ? (
+        <label className="mt-4 block text-xs font-light text-ash">Alert ≥ bpm
+          <input
+            type="number"
+            value={settings.alertThreshold}
+            onChange={(e) => hrZoneStore.setAlertThreshold(parseInt(e.target.value, 10) || 175)}
+            className="mt-1 w-full rounded-card bg-white/5 px-3 py-2 text-white outline-none transition focus:bg-white/10"
+            min={100}
+            max={220}
+          />
+        </label>
+      ) : null}
+
+      {isOver ? <div className="mt-3 text-xs font-semibold text-red-400">⚠ HR {hr} ≥ {settings.alertThreshold} bpm</div> : null}
+
+      {/* Zone table */}
+      <div className="mt-5">
+        <div className="mb-2 text-[10px] uppercase tracking-nav text-zinc-600">Zones</div>
+        <div className="space-y-1.5">
+          {zones.map((z, i) => {
+            const r = getZoneRange(z, cfg);
+            const active = i === currentZone;
+            return (
+              <div
+                key={z.zone}
+                className={`flex items-center justify-between rounded-card px-3 py-1.5 text-xs transition ${
+                  active ? "bg-white/10 text-white" : "text-ash"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${z.bg}`} />
+                  {z.label}
+                </span>
+                <span className="tabular-nums">
+                  {r.low}–{r.high} bpm
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -73,4 +174,11 @@ export function getStoredMaxHr(): number {
   if (typeof window === "undefined") return 190;
   const v = localStorage.getItem(LS_MAX);
   return v ? parseInt(v, 10) : 190;
+}
+
+export function getStoredAlertSettings(): { threshold: number; enabled: boolean } {
+  if (typeof window === "undefined") return { threshold: 175, enabled: false };
+  const t = localStorage.getItem(LS_ALERT);
+  const e = localStorage.getItem(LS_ENABLED);
+  return { threshold: t ? parseInt(t, 10) : 175, enabled: e === "1" };
 }

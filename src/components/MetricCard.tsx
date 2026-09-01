@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 export function MetricCard({
   label,
   value,
@@ -8,16 +10,16 @@ export function MetricCard({
   label: string;
   value: string;
   unit?: string;
-  sub?: string;
+  sub?: ReactNode;
   colorClass?: string;
 }) {
   return (
-    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-6 flex flex-col gap-2">
-      <div className="text-xs tracking-widest text-zinc-500 uppercase">{label}</div>
-      <div className={`text-5xl font-black tabular-nums ${colorClass || "text-white"}`}>
-        {value} {unit ? <span className="text-xl font-semibold text-zinc-400">{unit}</span> : null}
+    <div className="flex flex-col gap-3">
+      <div className="eyebrow !text-ash">{label}</div>
+      <div className={`metric-num text-6xl lg:text-7xl ${colorClass || "text-white"}`}>
+        {value} {unit ? <span className="text-2xl font-light text-ash">{unit}</span> : null}
       </div>
-      {sub ? <div className="text-sm text-zinc-400">{sub}</div> : null}
+      {sub ? <div className="text-body-light text-sm text-ash">{sub}</div> : null}
     </div>
   );
 }

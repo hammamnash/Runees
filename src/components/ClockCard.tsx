@@ -31,30 +31,32 @@ export function ClockCard() {
       : "";
 
   return (
-    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 overflow-hidden">
+    <div className="overflow-hidden">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-6 py-4 flex items-center justify-between text-left hover:bg-zinc-900/60"
+        className="w-full py-2 text-left"
         aria-expanded={open}
       >
-        <span className="text-xs tracking-widest text-zinc-500 uppercase">Device Time</span>
-        <span className="flex items-center gap-3">
-          {!open ? <span className="text-2xl font-bold tabular-nums text-zinc-300">{time}</span> : null}
-          <svg
-            className={`h-4 w-4 text-zinc-500 transition-transform ${open ? "rotate-180" : ""}`}
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            aria-hidden
-          >
-            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
-          </svg>
+        <span className="flex items-center justify-between">
+          <span className="eyebrow !text-ash">Device Time</span>
+          <span className="flex items-center gap-4">
+            {!open ? <span className="metric-num text-3xl text-mist">{time}</span> : null}
+            <svg
+              className={`h-4 w-4 text-ash transition-transform ${open ? "rotate-180" : ""}`}
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden
+            >
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+            </svg>
+          </span>
         </span>
       </button>
       {open ? (
-        <div className="px-6 pb-6 flex flex-col gap-1">
-          <div className="text-5xl font-black tabular-nums text-white">{time}</div>
-          <div className="text-sm text-zinc-400">
-            {date} · <span className="text-zinc-300">{tz}</span>
+        <div className="flex flex-col gap-1 pt-4">
+          <div className="metric-num text-6xl text-white lg:text-7xl">{time}</div>
+          <div className="text-body-light text-sm text-ash">
+            {date} · <span className="text-mist">{tz}</span>
           </div>
         </div>
       ) : null}

@@ -4,8 +4,149 @@
 
 :root {
   color-scheme: dark;
+
+  /* Dala design tokens */
+  --color-void: #000000;
+  --color-bone-white: #ffffff;
+  --color-ash-gray: #9a9a9a;
+  --color-silver-mist: #bdbdbd;
+  --color-electric-iris: #8052ff;
+  --color-saffron-spark: #ffb829;
+  --color-deep-verdant: #15846e;
 }
+
+html,
 body {
-  background: #000;
+  background: var(--color-void);
+  color: var(--color-bone-white);
+}
+
+body {
+  font-feature-settings: "ss01" on;
+}
+
+/* Ultra-light body copy — Dala signature */
+.text-body-light {
+  font-weight: 200;
+  line-height: 1.5;
+}
+
+/* Display headline: weight 400 + aggressive negative tracking */
+.text-display {
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+/* Small uppercase label (nav / section labels) */
+.label-caps {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+/* Tiny amber section eyebrow */
+.eyebrow {
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+  color: var(--color-saffron-spark);
+}
+
+/* Ghost text button — bare text, no container */
+.ghost-btn {
+  font-weight: 400;
+  font-size: 14px;
+  color: var(--color-ash-gray);
+  transition: color 0.2s ease;
+  cursor: pointer;
+}
+.ghost-btn:hover {
+  color: var(--color-bone-white);
+}
+
+/* Primary violet pill — the sole filled CTA style */
+.iris-pill {
+  background: var(--color-electric-iris);
   color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  border-radius: 22.5px;
+  padding: 14.4px 16px;
+  transition: filter 0.2s ease;
+  cursor: pointer;
+}
+.iris-pill:hover {
+  filter: brightness(1.12);
+}
+.iris-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Secondary pill — outline only, no fill */
+.ghost-pill {
+  background: transparent;
+  color: var(--color-ash-gray);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+  border-radius: 22.5px;
+  padding: 14.4px 16px;
+  transition: color 0.2s ease;
+  cursor: pointer;
+}
+.ghost-pill:hover {
+  color: var(--color-bone-white);
+}
+
+/* Big metric numerals — weight 400, tabular */
+.metric-num {
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Soft glass panel — section separation without borders (Dala-compliant) */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 24px;
+  padding: 28px;
+}
+@media (min-width: 1024px) {
+  .glass-panel {
+    padding: 36px;
+  }
+}
+
+/* Custom scrollbar to match void aesthetic */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #000;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+
+/* Remove number input spinners for cleaner look */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }

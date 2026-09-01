@@ -22,15 +22,15 @@ export function LapTrack({ distanceM }: { distanceM: number | null }) {
   const dash = perimeter * progress;
 
   return (
-    <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 flex items-center gap-4">
-      <div className="relative h-[100px] w-[100px] shrink-0">
-        <svg width={100} height={100} viewBox="0 0 100 100">
-          <path d={trackPath} fill="none" stroke="#27272a" strokeWidth={8} />
+    <div className="flex items-center gap-6">
+      <div className="relative h-[110px] w-[110px] shrink-0">
+        <svg width={110} height={110} viewBox="0 0 100 100">
+          <path d={trackPath} fill="none" stroke="#1c1c1c" strokeWidth={7} />
           <path
             d={trackPath}
             fill="none"
-            stroke="#22c55e"
-            strokeWidth={8}
+            stroke="#8052ff"
+            strokeWidth={7}
             strokeLinecap="round"
             strokeDasharray={`${dash} ${perimeter}`}
             style={{ transition: "stroke-dasharray 0.5s ease" }}
@@ -38,17 +38,17 @@ export function LapTrack({ distanceM }: { distanceM: number | null }) {
         </svg>
         <div className="absolute inset-0 grid place-items-center">
           <div className="text-center">
-            <div className="text-lg font-black">{pct}%</div>
-            <div className="text-[10px] text-zinc-500">LAP {lap}</div>
+            <div className="metric-num text-xl text-white">{pct}%</div>
+            <div className="text-[10px] uppercase tracking-nav text-ash">LAP {lap}</div>
           </div>
         </div>
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-xs text-zinc-500 uppercase tracking-widest">Track · 400m / lap</div>
-        <div className="text-sm font-semibold">Lap {lap} · {(d % lapLen).toFixed(0)} / 400 m</div>
-        <div className="text-xs text-zinc-500">{d.toFixed(0)} m total · {totalLaps} laps</div>
-        <div className="mt-2 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
-          <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${pct}%` }} />
+      <div className="min-w-0 flex-1">
+        <div className="eyebrow !text-ash mb-2">Track · 400m / lap</div>
+        <div className="text-sm font-light text-white">Lap {lap} · {(d % lapLen).toFixed(0)} / 400 m</div>
+        <div className="text-xs font-light text-ash">{d.toFixed(0)} m total · {totalLaps} laps</div>
+        <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-iris transition-all duration-500" style={{ width: `${pct}%` }} />
         </div>
       </div>
     </div>
