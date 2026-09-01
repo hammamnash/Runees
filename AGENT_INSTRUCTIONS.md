@@ -96,26 +96,29 @@ distance: uint32 LE, unit 1/10 m (if present) -> m = value / 10
 - Speed $km/h$: $speed \times 3.6$
 - Stride $m$: from RSC or `•`
 
-### 4.3 Connection Flow (Dual-Source)
+### 4.3 Connection Flow (Device Pool + Source Assignment)
 
-Each slot (Foot Pod / Heart Rate) is an independent `useBleSource(slot)` instance with its own picker, GATT connection, and notifications. One physical device (e.g. Garmin watch) can be assigned to both slots.
+Connection is **separated from source assignment**. The user connects device(s) once via the browser's native BLE picker (forming a **pool**), then assigns each source (Foot Pod / Heart Rate) to any connected device. One device (e.g. Garmin watch) can serve both sources at once.
 
 ```mermaid
 flowchart TD
-    A[User clicks Choose Foot Pod / Choose HR Strap] --> B[navigator.bluetooth.requestDevice<br/>Foot Pod filter: 0x1814 / HR filter: 0x180D<br/>optionalServices: other + 0x180F, 0x180A]
-    B --> C[gatt.connect]
-    C --> D[getPrimaryService + getCharacteristic]
-    D --> E[startNotifications]
-    E --> F[oncharacteristicvaluechanged -> parse -> store]
-    F --> G[HR priority: strap wins, watch fallback after 5s]
-    G --> H[Update UI + Recorder if active]
+    A[User clicks Connect Device] --> B[navigator.bluetooth.requestDevice<br/>filters: 0x180D / 0x1814<br/>optionalServices: FIXED superset 0x180D,0x1814,0x180F,0x180A]
+    B --> C[registerDevice -> pool]
+    C --> D[connectDevice -> gatt.connect, cache one GATT server per device]
+    D --> E[User assigns source: assignSource(slot, deviceId)]
+    E --> F[attachSlotSource -> getPrimaryService + getCharacteristic + startNotifications]
+    F --> G[oncharacteristicvaluechanged -> parse -> onMetrics]
+    G --> H[HR priority: strap wins, watch fallback after 5s]
+    H --> I[Update UI + Recorder if active]
 ```
 
-- Must be triggered by **user gesture** (button click) per slot.
-- Handle `gattserverdisconnected` -> show reconnect, auto-reconnect via `navigator.bluetooth.getDevices()` + stored device ID (localStorage `runees_ble_{slot}_id`).
-- Request `optionalServices` to avoid `NotFoundError` on some watches.
-- **HR priority:** HR strap (`heartrate` slot) is primary; foot pod HR is fallback if strap hasn't sent HR in 5s. RSC (pace/cadence/distance) always from foot pod slot.
-- **Persistence:** Device ID + name stored in localStorage per slot; auto-reconnect attempted on mount via `getDevices()`.
+- **`optionalServices` is a FIXED superset** `[0x180D, 0x1814, 0x180F, 0x180A]` requested at picker time — you can't add services after connecting. This is required so any source can be assigned later.
+- **One GATT server per device.** `connectDevice` connects once and caches the server keyed by `deviceId`. Assigning Foot Pod + HR to the same watch reuses the same server; guarded `hrAttached`/`rscAttached` flags prevent starting a shared subscription twice.
+- **Auto-reconnect is serialized.** On mount, reconnect each granted device **once**, sequentially, via a module-level `reconnectingPromise` (no per-source timers that can race).
+- **Persistence schema:** device pool `runees_devices` = `[{ id, name }]`; per-source assignments `runees_source_footpod` / `runees_source_heartrate` = deviceId. On load: read pool → reconnect each device once → apply assignments by id → subscribe. A saved `deviceId` no longer in `getDevices()` (permission revoked / browser cleared) → source marked **unassigned**, no error.
+- **HR priority:** HR strap (`heartrate` slot) is primary; foot pod HR is fallback if strap hasn't sent HR in 5s. RSC (pace/cadence/distance) always from foot pod slot. This logic lives in `page.tsx` (unchanged).
+
+**Files:** `src/lib/bleDevicePool.ts` (device-pool store + `useSyncExternalStore`), `src/hooks/useBleSource.ts` (slim per-source hook).
 
 ---
 

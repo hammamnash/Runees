@@ -279,6 +279,23 @@ Request: treadmill run with chest strap for HR + Garmin watch for foot pod (pace
 - **`src/hooks/useBluetooth.ts`** — kept as legacy (not removed, for reference).
 - **Verified:** `npm run build` 120 kB / 208 kB, `npm run lint` 1 warning (stale dep, harmless).
 
+### 16. Phase 4 — Device-Pool BLE (Connect vs Source Assignment) — In Progress 2026-09-01
+
+Request: separate *device connection* (browser native BLE picker) from *source assignment* (which connected device feeds Foot Pod / HR). One device can serve both sources; auto-reconnect + restore assignments on reload.
+
+- **`src/lib/bleDevicePool.ts`** (new) — module-level **device-pool store** (used via `useSyncExternalStore`):
+  - `PooledDevice` = `{ id, name, status, batteryPct, deviceInfo, error, refCount, slots }`; `PoolState` = `{ devices, assignments, reconnectInProgress }`.
+  - Connection **split from source assignment**: `connectDevice(device)` (one GATT server per device, cached in registry) vs `attachSlotSource(slot, deviceId, onMetrics)` (guarded `hrAttached`/`rscAttached` + refCount).
+  - `pickDevice()` — FIXED optionalServices superset `[0x180D, 0x1814, 0x180F, 0x180A]` at picker time.
+  - `assignSource(slot, id|null)`, `disconnectDevice(id)`, `forgetDevice(id)`, `refreshDevices()`.
+  - Serialized auto-reconnect via module-level `reconnectingPromise` (connect each granted device once, sequentially).
+  - Persistence: `runees_devices` pool + `runees_source_footpod`/`runees_source_heartrate` assignments. Stale id → unassigned silently.
+  - SSR-safe: `getServerSnapshot` returns cached empty snapshot; `currentSnapshot` cached & recomputed on `emit()`.
+- **`src/hooks/useBleSource.ts`** (rewritten) — slim per-slot hook: subscribes to the pool store, resolves its assigned device, attaches notifications. Keeps the previous return surface (`status`, `deviceName`, `deviceId`, `error`, `batteryPct`, `deviceInfo`, `connect`, `disconnect`, `forget`, `connectById`, `isSupported`) so `page.tsx` compiles unchanged.
+- **`src/app/page.tsx`** — replaced the per-slot Sources panel with a **Devices panel**: single `Connect Device` button (native picker) + list of pooled devices (status/battery/info/assignment) + per-source assign dropdowns (Foot Pod / HR) that only list granted devices. HR priority/fallback wiring unchanged.
+- **`AGENT_INSTRUCTIONS.md`** §4.3 — updated to the device-pool connection flow.
+- **Verified:** `npx tsc --noEmit` clean; `npm run build` 122 kB / 209 kB; `npm run lint` clean (only pre-existing `recorder` warning).
+
 ---
 
 ## Verification

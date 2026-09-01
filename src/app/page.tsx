@@ -1,5 +1,5 @@
 ﻿﻿"use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { MetricCard } from "@/components/MetricCard";
 import { LiveChart } from "@/components/LiveChart";
 import { LapTrack } from "@/components/LapTrack";
@@ -10,6 +10,7 @@ import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
 import { getHrZone } from "@/lib/hrZones";
 import { downloadFit } from "@/lib/fitEncoder";
 import { ema, HOLD_MS, STATIONARY_SPEED_MS } from "@/lib/smoothing";
+import { assignSource, disconnectDevice, pickDevice, poolStore } from "@/lib/bleDevicePool";
 
 function formatTime(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -113,6 +114,21 @@ export default function Home() {
 
   const footpod = useBleSource("footpod", onFootpodMetrics);
   const heartrate = useBleSource("heartrate", onHrMetrics);
+
+  // Subscribe to the device-pool store so this page re-renders as devices connect/disconnect.
+  const pool = useSyncExternalStore(poolStore.subscribe, poolStore.getSnapshot, poolStore.getServerSnapshot);
+
+  const handleAddDevice = useCallback(async () => {
+    await pickDevice();
+  }, []);
+
+  const handleDisconnectDevice = useCallback((id: string | null) => {
+    disconnectDevice(id);
+  }, []);
+
+  const handleAssignSource = useCallback((slot: "footpod" | "heartrate", id: string | null) => {
+    assignSource(slot, id);
+  }, []);
 
   // Derived HR card state: if footpod (watch) is connected it also provides HR,
   // so HR section should show as connected via shared device until a dedicated strap is chosen.
@@ -248,75 +264,96 @@ export default function Home() {
           On watch: <span className="text-zinc-200">Hold Menu &gt; Sensors &gt; Virtual Run</span> then start. Keep this tab in foreground. Pace/cadence require Virtual Run (not Broadcast HR).
         </div>
 
-        {/* Sources — dual BLE: Foot Pod (RSC) + Heart Rate (HR) */}
+        {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-            <h2 className="text-sm font-bold tracking-widest text-white uppercase">Sources</h2>
-            <span className="text-xs text-zinc-500">Assign each input to a BLE device. One device can serve both.</span>
+            <h2 className="text-sm font-bold tracking-widest text-white uppercase">Devices</h2>
+            <button onClick={handleAddDevice} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">
+              Connect Device
+            </button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-            {/* Foot Pod */}
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
+
+          {/* Connected Devices pool */}
+          <div className="p-4 space-y-2">
+            {pool.devices.length === 0 ? (
+              <div className="text-xs text-zinc-500">No devices connected. Click <span className="text-zinc-300">Connect Device</span> to open the browser BLE picker.</div>
+            ) : (
+              pool.devices.map((d) => {
+                const isFoot = pool.assignments.footpod === d.id;
+                const isHr = pool.assignments.heartrate === d.id;
+                return (
+                  <div key={d.id} className="rounded-xl bg-black/40 border border-zinc-800 p-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className={`h-2 w-2 rounded-full ${d.status === "connected" ? "bg-emerald-500" : d.status === "connecting" ? "bg-amber-500 animate-pulse" : d.status === "error" ? "bg-red-500" : "bg-zinc-600"}`} />
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white truncate">{d.name || d.id}</div>
+                        <div className="text-xs text-zinc-500">
+                          {d.status === "connected" ? "Connected" : d.status === "connecting" ? "Connecting..." : d.status === "error" ? "Error" : "Disconnected"}
+                          {d.batteryPct != null ? ` • ${d.batteryPct}%` : ""}
+                          {d.deviceInfo?.model ? ` • ${d.deviceInfo.model}` : ""}
+                        </div>
+                        {d.error ? <div className="text-xs text-amber-400">{d.error}</div> : null}
+                        {isFoot || isHr ? (
+                          <div className="text-xs text-zinc-400 mt-0.5">
+                            → {[isFoot ? "Foot Pod" : null, isHr ? "Heart Rate" : null].filter(Boolean).join(" + ")}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <button onClick={() => handleDisconnectDevice(d.id)} className="rounded-full border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-900">
+                      Disconnect
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Per-source assignment dropdowns */}
+          <div className="border-t border-zinc-800 p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${footpod.status === "connected" ? "bg-emerald-500" : footpod.status === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
                   <span className="text-sm font-semibold text-white">Foot Pod</span>
                   <span className="text-xs text-zinc-500">RSC • pace/cadence/distance</span>
                 </div>
-                <span className="text-xs text-zinc-400">{footpod.status === "connected" ? footpod.deviceName || "Connected" : footpod.status === "connecting" ? "Connecting..." : "Not connected"}</span>
               </div>
-              {footpod.deviceName ? <div className="text-xs text-zinc-500 truncate">{footpod.deviceName}{footpod.batteryPct != null ? ` • ${footpod.batteryPct}%` : ""}{footpod.deviceInfo?.model ? ` • ${footpod.deviceInfo.model}` : ""}</div> : null}
+              <select
+                className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-white"
+                value={pool.assignments.footpod ?? ""}
+                onChange={(e) => handleAssignSource("footpod", e.target.value || null)}
+              >
+                <option value="">— Unassigned —</option>
+                {pool.devices.map((d) => (
+                  <option key={d.id} value={d.id ?? ""}>{d.name || d.id}</option>
+                ))}
+              </select>
               {footpod.error ? <div className="text-xs text-amber-400">{footpod.error}</div> : null}
               {footpod.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
-              <div className="flex flex-wrap gap-2">
-                {footpod.status !== "connected" ? (
-                  <button onClick={footpod.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Choose Foot Pod</button>
-                ) : (
-                  <button onClick={footpod.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
-                )}
-                {(footpod.deviceId || footpod.deviceName) && footpod.status !== "connecting" ? (
-                  <button onClick={footpod.forget} className="rounded-full border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-900">Forget</button>
-                ) : null}
-              </div>
             </div>
-            {/* Heart Rate — shows shared watch HR when footpod connected and no dedicated strap */}
-            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-3">
+
+            <div className="rounded-xl bg-black/40 border border-zinc-800 p-4 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-600"}`} />
                   <span className="text-sm font-semibold text-white">Heart Rate</span>
                   <span className="text-xs text-zinc-500">HR</span>
                 </div>
-                <span className="text-xs text-zinc-400">{hrCardStatus === "connected" ? (hrCardName || "Connected") : hrCardStatus === "connecting" ? "Connecting..." : "Not connected"}</span>
               </div>
-              {hrCardName ? (
-                <div className="text-xs text-zinc-500 truncate">
-                  {hrCardName}
-                  {hrCardBattery != null ? ` • ${hrCardBattery}%` : ""}
-                  {hrCardInfo?.model ? ` • ${hrCardInfo.model}` : ""}
-                  {hrIsShared ? <span className="ml-1 text-zinc-400">(via Foot Pod)</span> : null}
-                </div>
-              ) : null}
-              {hrIsShared ? <div className="text-xs text-zinc-500">Using watch HR. Add a dedicated strap for more accurate HR.</div> : null}
+              <select
+                className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-white"
+                value={pool.assignments.heartrate ?? ""}
+                onChange={(e) => handleAssignSource("heartrate", e.target.value || null)}
+              >
+                <option value="">— Unassigned —</option>
+                {pool.devices.map((d) => (
+                  <option key={d.id} value={d.id ?? ""}>{d.name || d.id}</option>
+                ))}
+              </select>
+              {hrIsShared ? <div className="text-xs text-zinc-500">Using watch HR. Assign a dedicated device for more accurate HR.</div> : null}
               {heartrate.error ? <div className="text-xs text-amber-400">{heartrate.error}</div> : null}
               {heartrate.isSupported === false ? <div className="text-xs text-red-400">Web Bluetooth not supported. Use Chrome/Edge.</div> : null}
-              <div className="flex flex-wrap gap-2">
-                {hrIsDedicated ? (
-                  <button onClick={heartrate.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
-                ) : hrIsShared ? (
-                  <>
-                    <button onClick={heartrate.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Add Another</button>
-                    <button onClick={footpod.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
-                  </>
-                ) : heartrate.status !== "connected" ? (
-                  <button onClick={heartrate.connect} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-zinc-200">Choose HR Strap</button>
-                ) : (
-                  <button onClick={heartrate.disconnect} className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-900">Disconnect</button>
-                )}
-                {(heartrate.deviceId || heartrate.deviceName) && heartrate.status !== "connecting" && !hrIsShared ? (
-                  <button onClick={heartrate.forget} className="rounded-full border border-zinc-800 px-3 py-2 text-xs text-zinc-500 hover:bg-zinc-900">Forget</button>
-                ) : null}
-              </div>
             </div>
           </div>
         </section>
