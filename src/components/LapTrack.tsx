@@ -17,7 +17,9 @@ export function LapTrack({ distanceM }: { distanceM: number | null }) {
   const x2 = cx + straight / 2;
   const yTop = cy - r;
   const yBot = cy + r;
-  const trackPath = `M ${x1} ${yTop} L ${x2} ${yTop} A ${r} ${r} 0 0 1 ${x2} ${yBot} L ${x1} ${yBot} A ${r} ${r} 0 0 1 ${x1} ${yTop} Z`;
+  // Start at middle top, run counter-clockwise:
+  // top-left half straight → left bend → bottom straight → right bend → top-right half straight
+  const trackPath = `M ${cx} ${yTop} L ${x1} ${yTop} A ${r} ${r} 0 0 0 ${x1} ${yBot} L ${x2} ${yBot} A ${r} ${r} 0 0 0 ${x2} ${yTop} L ${cx} ${yTop} Z`;
   const perimeter = 2 * straight + 2 * Math.PI * r; // exact stadium perimeter
   const dash = perimeter * progress;
 
