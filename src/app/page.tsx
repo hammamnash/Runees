@@ -6,12 +6,14 @@ import { ClockCard } from "@/components/ClockCard";
 import { LiveChart } from "@/components/LiveChart";
 import { LapTrack } from "@/components/LapTrack";
 import { HrAlertSettings } from "@/components/HrAlertSettings";
+import { MetronomeCard } from "@/components/MetronomeCard";
 import { ParticleField } from "@/components/ParticleField";
 import { useBleSource } from "@/hooks/useBleSource";
 import { useRecorder } from "@/hooks/useRecorder";
 import { paceMinPerKm, speedKmh } from "@/lib/bleParser";
 import { getHrZone, HrZoneConfig } from "@/lib/hrZones";
 import { hrZoneStore } from "@/lib/hrZoneStore";
+import { metronomeStore } from "@/lib/metronomeStore";
 import { downloadFit } from "@/lib/fitEncoder";
 import { ema, HOLD_MS, STATIONARY_SPEED_MS } from "@/lib/smoothing";
 import { assignSource, disconnectDevice, pickDevice, poolStore } from "@/lib/bleDevicePool";
@@ -123,6 +125,14 @@ export default function Home() {
 
   // Subscribe to the device-pool store so this page re-renders as devices connect/disconnect.
   const pool = useSyncExternalStore(poolStore.subscribe, poolStore.getSnapshot, poolStore.getServerSnapshot);
+
+  // Metronome engine state (running + bpm). Read here so the collapsed Settings
+  // header can show cuing status even while the card itself is unmounted.
+  const metro = useSyncExternalStore(
+    metronomeStore.subscribe,
+    metronomeStore.getSnapshot,
+    metronomeStore.getServerSnapshot
+  );
 
   const handleAddDevice = useCallback(async () => {
     await pickDevice();
@@ -348,6 +358,12 @@ export default function Home() {
                     <span className={`h-2 w-2 rounded-full ${hrCardStatus === "connected" ? "bg-emerald-500" : hrCardStatus === "connecting" ? "bg-amber-500 animate-pulse" : "bg-zinc-700"}`} />
                     HR: {pool.assignments.heartrate ? (pool.devices.find((d) => d.id === pool.assignments.heartrate)?.name || pool.assignments.heartrate) : "—"}
                   </span>
+                  {metro.running ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-2 w-2 animate-pulse rounded-full bg-iris" />
+                      Metronome: <span className="metric-num text-white">{metro.bpm}</span> spm
+                    </span>
+                  ) : null}
                 </span>
               ) : null}
             </span>
@@ -361,6 +377,7 @@ export default function Home() {
             </svg>
           </button>
           {settingsOpen ? (
+          <>
           <div className="grid grid-cols-1 gap-6 pt-8 lg:grid-cols-3 lg:gap-16">
         {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
         <section className="overflow-hidden lg:col-span-2">
@@ -504,6 +521,12 @@ export default function Home() {
             <HrAlertSettings hr={hr} />
           </div>
           </div>
+
+          {/* Metronome — outside the lg:gap-16 grid so no dead 64px gap above */}
+          <div className="mt-6 border-t border-white/10 pt-6">
+            <MetronomeCard liveCadence={displayCad} />
+          </div>
+          </>
           ) : null}
         </div>
         {/* Live Metrics — device time row + HR + pace + cadence */}
