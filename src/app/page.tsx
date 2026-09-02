@@ -378,9 +378,11 @@ export default function Home() {
           </button>
           {settingsOpen ? (
           <>
-          <div className="grid grid-cols-1 gap-6 pt-8 lg:grid-cols-3 lg:gap-16">
+          <div className="grid grid-cols-1 gap-6 pt-8 lg:grid-cols-2 lg:gap-16">
+        {/* Column 1 — Devices stacked above Metronome */}
+        <div className="flex min-w-0 flex-col gap-6">
         {/* Devices + Source Assignment — connect device(s) once, then assign each source */}
-        <section className="overflow-hidden lg:col-span-2">
+        <section className="overflow-hidden">
           <div className="flex items-center justify-between gap-3 pb-6">
             <button
               onClick={() => setDevicesOpen((v) => !v)}
@@ -516,15 +518,14 @@ export default function Home() {
           ) : null}
         </section>
 
-          {/* HR zone configuration lives in Settings */}
-          <div>
-            <HrAlertSettings hr={hr} />
-          </div>
-          </div>
+          {/* Metronome — stacked below Devices inside column 1 */}
+          <MetronomeCard liveCadence={displayCad} />
+        </div>
 
-          {/* Metronome — outside the lg:gap-16 grid so no dead 64px gap above */}
-          <div className="mt-6 border-t border-white/10 pt-6">
-            <MetronomeCard liveCadence={displayCad} />
+        {/* Column 2 — HR zone configuration lives in Settings */}
+        <div>
+          <HrAlertSettings hr={hr} />
+        </div>
           </div>
           </>
           ) : null}

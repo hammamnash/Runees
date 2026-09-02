@@ -121,7 +121,7 @@ export function MetronomeCard({ liveCadence }: { liveCadence: number | null }) {
       </div>
 
       {/* Beat indicator dots — pulse with the accent cycle (4 beats/bar) */}
-      <div className="flex items-center gap-2" aria-hidden>
+      <div className="flex items-center gap-6" aria-hidden>
         {[0, 1, 2, 3].map((i) => (
           <span
             key={i}
