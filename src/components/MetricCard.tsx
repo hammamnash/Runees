@@ -14,7 +14,7 @@ export function MetricCard({
   colorClass?: string;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-30">
       <div className="eyebrow !text-ash">{label}</div>
       <div className={`metric-num text-5xl lg:text-6xl ${colorClass || "text-white"}`}>
         {value} {unit ? <span className="text-2xl font-light text-ash">{unit}</span> : null}

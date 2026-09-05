@@ -510,7 +510,7 @@ export default function Home() {
         <div className="glass-panel">
           <p className="eyebrow mb-2">Live Metrics</p>
           {/* Compact device time strip */}
-          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-4">
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 pb-2">
             <span className="metric-num text-2xl text-white">{clockTime}</span>
             <span className="text-body-light text-xs text-ash">{clockDate} · {clockTz}</span>
           </div>
@@ -522,7 +522,7 @@ export default function Home() {
             sub={hr != null ? <HrZoneGauge hr={hr} cfg={zoneCfg} /> : "Connect to see HR"}
             colorClass={zone?.color || "text-white"}
           />
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-30">
             <div className="flex items-center justify-between">
               <span className="eyebrow !text-ash">Pace</span>
               <button onClick={() => setShowKmh((v) => !v)} className="ghost-btn text-xs">
@@ -549,7 +549,7 @@ export default function Home() {
         {/* Session Box — unified: header + metrics + chart/track. Distance/chart/track only count after Start */}
         <section className="glass-panel overflow-hidden">
           {/* Session header: Start at top */}
-          <div className="flex flex-wrap items-center justify-between gap-4 pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-2">
             <div className="flex flex-wrap items-center gap-4">
               <h2 className="text-display text-3xl text-white md:text-4xl">Session</h2>
               <span className={`h-2 w-2 rounded-full ${recorder.state === "recording" ? "bg-emerald-500 animate-pulse" : recorder.state === "paused" ? "bg-amber-500" : recorder.state === "stopped" ? "bg-zinc-500" : "bg-zinc-700"}`} />
@@ -587,24 +587,24 @@ export default function Home() {
           ) : null}
 
           {/* Session metrics — sessionDistanceM / avgPace / avgHr only meaningful after Start */}
-          <div className="grid grid-cols-2 gap-8 pb-6 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-8 pb-2 md:grid-cols-4">
             <div>
-              <div className="eyebrow !text-ash mb-3">Time</div>
+              <div className="eyebrow !text-ash mb-30">Time</div>
               <div className="metric-num text-4xl text-white">{formatTime(recorder.elapsedMs)}</div>
               <div className="mt-2 text-xs capitalize font-light text-ash">{recorder.state} · 1 Hz</div>
             </div>
             <div>
-              <div className="eyebrow !text-ash mb-3">Distance</div>
+              <div className="eyebrow !text-ash mb-30">Distance</div>
               <div className="metric-num text-4xl text-white">{distKm} <span className="text-lg font-light text-ash">km</span></div>
               <div className="mt-2 text-xs font-light text-ash">Session total</div>
             </div>
             <div>
-              <div className="eyebrow !text-ash mb-3">Avg Pace</div>
+              <div className="eyebrow !text-ash mb-30">Avg Pace</div>
               <div className="metric-num text-4xl text-white">{avgPace} <span className="text-lg font-light text-ash">/km</span></div>
               <div className="mt-2 text-xs font-light text-ash">{recorder.records.length ? `${(sessionDistanceM / 1000).toFixed(2)} km` : "—"}</div>
             </div>
             <div>
-              <div className="eyebrow !text-ash mb-3">Avg HR {avgHrZone ? `• ${avgHrZone.label}` : ""}</div>
+              <div className="eyebrow !text-ash mb-30">Avg HR {avgHrZone ? `• ${avgHrZone.label}` : ""}</div>
               <div className={`metric-num text-4xl ${avgHrZone?.color || "text-white"}`}>{avgHr != null ? avgHr : "--"} <span className="text-lg font-light text-ash">bpm</span></div>
               <div className="mt-2 text-xs font-light text-ash">{avgHrZone ? avgHrZone.label : recorder.records.length ? "No HR samples yet" : "—"}</div>
             </div>
